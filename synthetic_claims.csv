@@ -1,0 +1,8 @@
+insurance,region,cost
+Medicare,East,500
+Medicare,West,600
+Commercial,East,1500
+Commercial,West,1800
+Medicaid,Midwest,400
+Commercial,South,2000
+Medicare,South,700
