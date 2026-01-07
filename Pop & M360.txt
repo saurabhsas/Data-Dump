@@ -1,0 +1,1570 @@
+/**************************************************************************
+ PROGRAM: POP_Assessment_Rebuild_Phase1A.sas
+ PURPOSE: POP Assessment – Foundation & Date Logic
+ NOTE   : Logic preserved, comments cleaned (Option B)
+**************************************************************************/
+
+/*-----------------------------------------------------------------------
+  SAS OPTIONS
+-----------------------------------------------------------------------*/
+GOPTIONS ACCESSIBLE;
+OPTIONS COMPRESS=YES REUSE=YES SYMBOLGEN MPRINT;
+
+/*-----------------------------------------------------------------------
+  ENVIRONMENT SETUP
+-----------------------------------------------------------------------*/
+/* -------- Development -------- */
+%let DataSubFolder   = php;
+%let path            = data;
+%let Env             = stage;
+%let folder          = PHP_TST;
+%let Project         = ACG;
+%let BOShareWinSrv   = cwtstbobjgrp;
+%let TableauShare    = TSTTBLOAPP01_PHP;
+%let TableauShareFP  = /data/&DataSubFolder./&TableauShare.;
+
+/* -------- Production (commented) -------- */
+/*
+%let DataSubFolder   = php;
+%let path            = data;
+%let Env             = prod;
+%let folder          = PHP_PRD;
+%let Project         = ACG;
+%let BOShareWinSrv   = cwprdbobjgrp;
+%let TableauShare    = PRDTLAPP02_PHP;
+%let TableauShareFP  = /data/&DataSubFolder./&TableauShare.;
+*/
+
+/*-----------------------------------------------------------------------
+  LIBRARIES
+-----------------------------------------------------------------------*/
+LIBNAME GII    "/data/php/stage/lrangel/GII_DATA_PULL";
+LIBNAME SSINGH "/data/php/stage/SSingh";
+LIBNAME RISK3  "/data/php/share_special/risk_hrp" COMPRESS=YES;
+
+/*-----------------------------------------------------------------------
+  OUTPUT FILES (POP ASSESSMENT)
+-----------------------------------------------------------------------*/
+FILENAME TXTSRC  "/&path./&DataSubFolder./&TableauShare./PHP_CO_LOB_POP_ASSMNT_SUMMARY.txt";
+FILENAME FINSRC  "/&path./&DataSubFolder./&TableauShare./PHP_CO_LOB_POP_ASSMNT_DETAIL.txt";
+FILENAME DETAIL  "/&path./&DataSubFolder./&TableauShare./PHP_CO_LOB_POP_ASSMNT_DETAIL2.txt";
+
+/*-----------------------------------------------------------------------
+  GLOBAL MACRO VARIABLES
+-----------------------------------------------------------------------*/
+%LET BUS_UT = 'PHP','PHP/PDS';
+
+%LET DXACUTY =
+    'ED CARE NEEDED: POTENTIALLY AVOIDABLE',
+    'EMERGENT: COULD BE PCP TREATABLE',
+    'NON-EMERGENT VISIT';
+
+/*-----------------------------------------------------------------------
+  ICD / HELLO CODE LIST (UNCHANGED)
+-----------------------------------------------------------------------*/
+%LET HELLO =
+'B376','I330','I39','I339','I340','I350','I351','I352','I358','I359','I360',
+'I368','I370','I378','I38','M860','M8610','M8620','M86119','M86219','M86129',
+'M86229','M86139','M86239','M86149','M86249','M86159','M86259','M86169','M86269',
+'M86179','M86279','M8618','M8628','M8619','M8629','M863','M864','M8660','M86619',
+'M86629','M86639','M86642','M86659','M86669','M86679','M8668','M8669','M869',
+'M4620','M4630','A480','G060','G061','G062','G09','K651','K6812','K6819','K630',
+'K750','N10','L0301','L0302','L03019','L03029','L03039','L03049','K122','L03211',
+'L03212','L03213','L03221','L03222','L03319','L03329','L03119','L03129','L03317',
+'L03811','L03818','L03891','L03898','L0390','L0391','L942','L988','M726','M5402',
+'M793','I96';
+
+/*-----------------------------------------------------------------------
+  DATE LOGIC (CORE POP ENGINE)
+-----------------------------------------------------------------------*/
+DATA _NULL_;
+    FORMAT RDATE MMDDYY10.;
+
+    /* Reporting month */
+    RDATE = INTNX('MONTH', TODAY(), -1, 'E');
+    CYSM  = INTNX('MONTH', RDATE, -1, 'E');
+
+    /* ACG window */
+    ACGEND = CYSM;
+    ACGBGN = INTNX('YEAR', ACGEND, -1, 'S');
+
+    /* Enrollment / ED windows */
+    ENGBEG = INTNX('MONTH', ACGEND, -11, 'B');
+    EDBEG  = INTNX('MONTH', ACGEND, -23, 'B');
+
+    /* Macro outputs */
+    CALL SYMPUTX('ELIGYM', PUT(RDATE, YYMMN6.));
+    CALL SYMPUTX('PYPM',   PUT(ACGBGN, YYMMN6.));
+    CALL SYMPUTX('CYPM',   PUT(ACGEND, YYMMN6.));
+    CALL SYMPUTX('BEGDT',  PUT(EDBEG, YYMMN6.));
+    CALL SYMPUTX('BEGCY',  PUT(ENGBEG, YYMMN6.));
+    CALL SYMPUTX('ENDDT',  PUT(ACGEND, YYMMN6.));
+    CALL SYMPUTX('BEGYR',  PUT(EDBEG, YEAR4.));
+    CALL SYMPUTX('ENDYR',  PUT(ACGEND, YEAR4.));
+
+    /* JIVA / CFO windows */
+    CALL SYMPUTX('SDAT9', PUT(EDBEG, DATE9.));
+    CALL SYMPUTX('SDATE', PUT(ENGBEG, DATE9.));
+    CALL SYMPUTX('EDATE', PUT(ACGEND, DATE9.));
+RUN;
+
+/*-----------------------------------------------------------------------
+  LOG VALIDATION
+-----------------------------------------------------------------------*/
+%PUT NOTE: BEGDT=&BEGDT.  ENDDT=&ENDDT.;
+%PUT NOTE: CYPM=&CYPM.    PYPM=&PYPM.;
+%PUT NOTE: ELIGYM=&ELIGYM.;
+
+/**************************************************************************
+ PHASE 1B: MEMBER ENROLLMENT & PROVIDER LOGIC
+**************************************************************************/
+
+/*-----------------------------------------------------------------------
+  MEMBER ENROLLMENT – FULL YEAR (CUDA_MM)
+-----------------------------------------------------------------------*/
+PROC SQL;
+CONNECT TO ODBC
+(
+  DATASRC=IRADW_SAWESCPDSAPP00_UAT_IND
+  USER="&cdisql_id."
+  PW="&cdisql_pw."
+);
+
+CREATE TABLE WORK.MEMBER_ENROLLMENT_IRADW_RAW AS
+SELECT DISTINCT
+    ELIGIBILITYYEARANDMONTH,
+    MEMBERID,
+    PRODUCTDESCR,
+    PRODUCTTYPEDESCR,
+    MEMBERUCI,
+    ACCOUNTID,
+    ACCOUNTNAME,
+    SUBSCRIBERID,
+    FSRESPONSIBILITY,
+    FSPRODUCT,
+    LINEOFBUSINESS            AS CMLFLAG,
+    RATEAREACODE,
+    RATEAREADESCR,
+    AIDCATEGORYCODE,
+    AGE,
+    GENDER,
+    METALLICLEVEL,
+    COUNTY
+FROM IRADW_UAT.DM_M360.CUDA_MM
+WHERE ELIGIBILITYYEARANDMONTH >= &BEGDT.
+  AND ELIGIBILITYYEARANDMONTH <= &ENDDT.
+  AND BUSINESSUNIT IN (&BUS_UT.);
+DISCONNECT FROM ODBC;
+QUIT;
+
+/*-----------------------------------------------------------------------
+  PROVIDER DETAILS (PCP)
+-----------------------------------------------------------------------*/
+PROC SQL;
+CONNECT TO ODBC
+(
+  DATASRC=IRADW_SAWESCPDSAPP00_UAT_IND
+  USER="&cdisql_id."
+  PW="&cdisql_pw."
+);
+
+CREATE TABLE WORK.PCP_IRADW_RAW AS
+SELECT DISTINCT
+    MEMBERID,
+    ELIGIBILITYYEARANDMONTH,
+    PCPNPI,
+    PCPLASTNAME,
+    PCPFIRSTNAME,
+    PCPGROUPNPI,
+    PCPGROUPTAXID,
+    PCPGROUPTAXIDNAME
+FROM IRADW_UAT.DM_M360.CUDA_MM
+WHERE ELIGIBILITYYEARANDMONTH >= &BEGDT.
+  AND ELIGIBILITYYEARANDMONTH <= &ENDDT.;
+DISCONNECT FROM ODBC;
+QUIT;
+
+/*-----------------------------------------------------------------------
+  SELECT MOST RECENT PCP PER MEMBER
+-----------------------------------------------------------------------*/
+PROC SORT DATA=WORK.PCP_IRADW_RAW;
+BY MEMBERID DESCENDING ELIGIBILITYYEARANDMONTH;
+RUN;
+
+DATA WORK.PCP_IRADW;
+SET WORK.PCP_IRADW_RAW (DROP=ELIGIBILITYYEARANDMONTH);
+BY MEMBERID;
+IF FIRST.MEMBERID;
+RUN;
+
+/*-----------------------------------------------------------------------
+  MERGE PCP INTO MEMBER ENROLLMENT
+-----------------------------------------------------------------------*/
+PROC SQL;
+CREATE TABLE WORK.MEMBER_ENROLLMENT_IRADW AS
+SELECT
+    A.*,
+    B.PCPNPI,
+    CATX(' ', B.PCPNPI, B.PCPLASTNAME, B.PCPFIRSTNAME) AS PCP_NAME,
+    CATX(' ', B.PCPGROUPTAXID, B.PCPGROUPTAXIDNAME)    AS PCP_GROUP_NAME
+FROM WORK.MEMBER_ENROLLMENT_IRADW_RAW AS A
+LEFT JOIN WORK.PCP_IRADW               AS B
+  ON A.MEMBERID = B.MEMBERID;
+QUIT;
+
+/*-----------------------------------------------------------------------
+  PROVIDER NPI ENRICHMENT
+-----------------------------------------------------------------------*/
+PROC SQL;
+CONNECT TO ODBC AS CBDL
+(
+  DATASRC=Caboodle_PROD_SAS
+  AUTHDOMAIN=Caboodle_PROD_SAS_Login
+);
+
+CREATE TABLE WORK.PROVIDER_NPI AS
+SELECT DISTINCT
+    NPI,
+    PrimaryLocation
+FROM CONNECTION TO CBDL
+(
+  SELECT
+      NPI,
+      PrimaryLocation
+  FROM PROVIDERDIM
+  WHERE IsCurrent = 1
+    AND NPI <> ' '
+);
+DISCONNECT FROM CBDL;
+QUIT;
+
+/*-----------------------------------------------------------------------
+  FINAL ENROLLMENT DATASET WITH PROVIDER LOCATION
+-----------------------------------------------------------------------*/
+PROC SQL;
+CREATE TABLE WORK.MEMBER_ENROLLMENT_IRADW AS
+SELECT DISTINCT
+    A.ELIGIBILITYYEARANDMONTH,
+    A.MEMBERID,
+    A.PRODUCTDESCR,
+    A.PRODUCTTYPEDESCR,
+    A.MEMBERUCI,
+    A.ACCOUNTID,
+    A.ACCOUNTNAME,
+    A.SUBSCRIBERID,
+    A.FSRESPONSIBILITY,
+    A.FSPRODUCT,
+    A.CMLFLAG,
+    A.RATEAREACODE,
+    A.RATEAREADESCR,
+    A.AIDCATEGORYCODE,
+    A.AGE,
+    A.GENDER,
+    A.METALLICLEVEL,
+    A.PCPNPI,
+    A.PCP_NAME,
+    A.PCP_GROUP_NAME,
+    B.PrimaryLocation,
+    A.COUNTY
+FROM WORK.MEMBER_ENROLLMENT_IRADW AS A
+LEFT JOIN WORK.PROVIDER_NPI       AS B
+  ON A.PCPNPI = B.NPI;
+QUIT;
+
+/*-----------------------------------------------------------------------
+  MEMBER UNIVERSE (LATEST ELIGIBILITY)
+-----------------------------------------------------------------------*/
+PROC SORT DATA=WORK.MEMBER_ENROLLMENT_IRADW NODUPKEY OUT=WORK.IRADW_ELIG;
+BY MEMBERID ELIGIBILITYYEARANDMONTH;
+RUN;
+
+DATA WORK.IRADW_ELIG;
+SET WORK.IRADW_ELIG;
+BY MEMBERID;
+IF ACCOUNTID = 'GR000857' THEN ACCOUNTID = 'A0006543';
+IF LAST.MEMBERID;
+RUN;
+
+/*-----------------------------------------------------------------------
+  MEMBER MONTHLY SNAPSHOT
+-----------------------------------------------------------------------*/
+PROC SQL;
+CREATE TABLE WORK.MEM_MO AS
+SELECT DISTINCT
+    MEMBERID        AS MEMBER_ID,
+    ELIGIBILITYYEARANDMONTH AS ELIGIBILITY_YM,
+    SUBSCRIBERID    AS SUBSCRIBER_KEY,
+    FSPRODUCT       AS FS_PRODUCT,
+    CMLFLAG         AS CML_FLAG,
+    MAX(MEMBERUCI)  AS MEMBERUCI,
+    METALLICLEVEL,
+    PCP_NAME,
+    PCP_GROUP_NAME,
+    PrimaryLocation,
+    COUNTY
+FROM WORK.MEMBER_ENROLLMENT_IRADW
+GROUP BY MEMBERID;
+QUIT;
+
+/*-----------------------------------------------------------------------
+  QA CHECK
+-----------------------------------------------------------------------*/
+PROC SQL;
+SELECT COUNT(DISTINCT MEMBERID) AS MEMBER_COUNT
+FROM WORK.IRADW_ELIG;
+QUIT;
+
+
+/**************************************************************************
+ PHASE 1C: CLAIMS CORE (MEDICAL + RX)
+**************************************************************************/
+
+/*-----------------------------------------------------------------------
+  MEDICAL CLAIMS (CUDA_CLAIMS)
+-----------------------------------------------------------------------*/
+PROC SQL;
+CONNECT TO ODBC
+(
+  DATASRC=IRADW_SAWESCPDSAPP00_UAT_IND
+  USER="&cdisql_id."
+  PW="&cdisql_pw."
+);
+
+CREATE TABLE WORK.MED_CLAIMS_RAW AS
+SELECT DISTINCT
+    MEMBERID,
+    CLAIMID,
+    SERVICEDATE,
+    PAIDDATE,
+    ADMITDATE,
+    DISCHARGEDATE,
+    PAID,
+    ALLOWED,
+    POSDESCR,
+    BILLTYPE,
+    REVENUECODE,
+    ICD10DX1,
+    ICD10DX2,
+    ICD10DX3,
+    ICD10DX4,
+    ICD10DX5
+FROM IRADW_UAT.DM_M360.CUDA_CLAIMS
+WHERE PAID > 0
+  AND SERVICEDATE BETWEEN "&SDAT9."D AND "&EDATE."D;
+DISCONNECT FROM ODBC;
+QUIT;
+
+/*-----------------------------------------------------------------------
+  DERIVE YEAR-MONTH (YYMMM) AND CLAIM TYPE
+-----------------------------------------------------------------------*/
+DATA WORK.MED_CLAIMS;
+SET WORK.MED_CLAIMS_RAW;
+
+YYMMM = PUT(SERVICEDATE, YYMMN6.);
+
+LENGTH CLAIM_TYPE $3;
+IF POSDESCR = 'INPATIENT' THEN CLAIM_TYPE = 'IP';
+ELSE IF POSDESCR = 'EMERGENCY' THEN CLAIM_TYPE = 'ED';
+ELSE CLAIM_TYPE = 'OP';
+RUN;
+
+/*-----------------------------------------------------------------------
+  PHARMACY CLAIMS (CUDA_RX)
+-----------------------------------------------------------------------*/
+PROC SQL;
+CONNECT TO ODBC
+(
+  DATASRC=IRADW_SAWESCPDSAPP00_UAT_IND
+  USER="&cdisql_id."
+  PW="&cdisql_pw."
+);
+
+CREATE TABLE WORK.RX_CLAIMS_RAW AS
+SELECT DISTINCT
+    MEMBERID,
+    FILLDATE          AS SERVICEDATE,
+    PAID              AS PAID,
+    ALLOWED           AS ALLOWED,
+    NDC,
+    DRUGNAME
+FROM IRADW_UAT.DM_M360.CUDA_RX
+WHERE PAID > 0
+  AND FILLDATE BETWEEN "&SDAT9."D AND "&EDATE."D;
+DISCONNECT FROM ODBC;
+QUIT;
+
+/*-----------------------------------------------------------------------
+  STANDARDIZE RX CLAIMS STRUCTURE
+-----------------------------------------------------------------------*/
+DATA WORK.RX_CLAIMS;
+SET WORK.RX_CLAIMS_RAW;
+
+YYMMM = PUT(SERVICEDATE, YYMMN6.);
+CLAIM_TYPE = 'RX';
+POSDESCR  = 'PHARMACY';
+RUN;
+
+/*-----------------------------------------------------------------------
+  UNION MEDICAL + RX CLAIMS
+-----------------------------------------------------------------------*/
+DATA WORK.ALL_CLAIMS;
+SET
+    WORK.MED_CLAIMS
+    WORK.RX_CLAIMS;
+RUN;
+
+/*-----------------------------------------------------------------------
+  QA CHECKS
+-----------------------------------------------------------------------*/
+PROC SQL;
+SELECT
+    COUNT(*)                      AS TOTAL_CLAIMS,
+    COUNT(DISTINCT MEMBERID)      AS DISTINCT_MEMBERS
+FROM WORK.ALL_CLAIMS;
+QUIT;
+
+/*-----------------------------------------------------------------------
+  INDEX FOR DOWNSTREAM PERFORMANCE
+-----------------------------------------------------------------------*/
+PROC DATASETS LIB=WORK NOLIST;
+MODIFY ALL_CLAIMS;
+INDEX CREATE MEMBERID YYMMM;
+QUIT;
+
+
+/**************************************************************************
+ PHASE 1D: COST & UTILIZATION (HRP, VISITS, READMITS)
+**************************************************************************/
+
+/*-----------------------------------------------------------------------
+  MEDICAL COST (IP / OP / ED)
+-----------------------------------------------------------------------*/
+PROC SQL;
+CREATE TABLE WORK.MED_COST AS
+SELECT
+    MEMBERID,
+    YYMMM,
+    SUM(PAID)    AS MED_PAID,
+    SUM(ALLOWED) AS MED_ALLOWED
+FROM WORK.ALL_CLAIMS
+WHERE CLAIM_TYPE IN ('IP','OP','ED')
+GROUP BY MEMBERID, YYMMM;
+QUIT;
+
+/*-----------------------------------------------------------------------
+  PHARMACY COST
+-----------------------------------------------------------------------*/
+PROC SQL;
+CREATE TABLE WORK.RX_COST AS
+SELECT
+    MEMBERID,
+    YYMMM,
+    SUM(PAID)    AS RX_PAID,
+    SUM(ALLOWED) AS RX_ALLOWED
+FROM WORK.ALL_CLAIMS
+WHERE CLAIM_TYPE = 'RX'
+GROUP BY MEMBERID, YYMMM;
+QUIT;
+
+/*-----------------------------------------------------------------------
+  TOTAL COST (MED + RX)
+-----------------------------------------------------------------------*/
+PROC SQL;
+CREATE TABLE WORK.HRP_COST AS
+SELECT
+    COALESCE(A.MEMBERID, B.MEMBERID) AS MEMBERID,
+    COALESCE(A.YYMMM,    B.YYMMM)    AS YYMMM,
+    COALESCE(MED_PAID,0) + COALESCE(RX_PAID,0)       AS TOTAL_PAID,
+    COALESCE(MED_ALLOWED,0) + COALESCE(RX_ALLOWED,0) AS TOTAL_ALLOWED,
+    MED_PAID,
+    RX_PAID
+FROM WORK.MED_COST A
+FULL JOIN WORK.RX_COST B
+  ON A.MEMBERID = B.MEMBERID
+ AND A.YYMMM    = B.YYMMM;
+QUIT;
+
+/*-----------------------------------------------------------------------
+  INPATIENT ADMISSIONS & LENGTH OF STAY
+-----------------------------------------------------------------------*/
+DATA WORK.IP_ADMITS;
+SET WORK.ALL_CLAIMS;
+WHERE CLAIM_TYPE = 'IP'
+  AND ADMITDATE IS NOT MISSING
+  AND DISCHARGEDATE IS NOT MISSING;
+
+LOS = DISCHARGEDATE - ADMITDATE;
+IF LOS < 0 THEN LOS = .;
+RUN;
+
+/*-----------------------------------------------------------------------
+  IP ADMISSION COUNTS
+-----------------------------------------------------------------------*/
+PROC SQL;
+CREATE TABLE WORK.IP_UTIL AS
+SELECT
+    MEMBERID,
+    YYMMM,
+    COUNT(DISTINCT CLAIMID) AS IP_ADMIT_CNT,
+    SUM(LOS)                AS IP_DAYS
+FROM WORK.IP_ADMITS
+GROUP BY MEMBERID, YYMMM;
+QUIT;
+
+/*-----------------------------------------------------------------------
+  ED VISIT COUNTS
+-----------------------------------------------------------------------*/
+PROC SQL;
+CREATE TABLE WORK.ED_UTIL AS
+SELECT
+    MEMBERID,
+    YYMMM,
+    COUNT(DISTINCT CLAIMID) AS ED_VISIT_CNT
+FROM WORK.ALL_CLAIMS
+WHERE CLAIM_TYPE = 'ED'
+GROUP BY MEMBERID, YYMMM;
+QUIT;
+
+/*-----------------------------------------------------------------------
+  OP VISIT COUNTS
+-----------------------------------------------------------------------*/
+PROC SQL;
+CREATE TABLE WORK.OP_UTIL AS
+SELECT
+    MEMBERID,
+    YYMMM,
+    COUNT(DISTINCT CLAIMID) AS OP_VISIT_CNT
+FROM WORK.ALL_CLAIMS
+WHERE CLAIM_TYPE = 'OP'
+GROUP BY MEMBERID, YYMMM;
+QUIT;
+
+/*-----------------------------------------------------------------------
+  30-DAY READMISSION LOGIC
+-----------------------------------------------------------------------*/
+PROC SORT DATA=WORK.IP_ADMITS;
+BY MEMBERID ADMITDATE;
+RUN;
+
+DATA WORK.READMIT_30;
+SET WORK.IP_ADMITS;
+BY MEMBERID;
+
+RETAIN PREV_DISCHG;
+
+IF FIRST.MEMBERID THEN PREV_DISCHG = .;
+
+READMIT_30_FLAG = 0;
+IF PREV_DISCHG NE . THEN DO;
+    IF ADMITDATE - PREV_DISCHG <= 30 THEN READMIT_30_FLAG = 1;
+END;
+
+PREV_DISCHG = DISCHARGEDATE;
+KEEP MEMBERID YYMMM READMIT_30_FLAG;
+RUN;
+
+/*-----------------------------------------------------------------------
+  AGGREGATE READMISSION FLAGS
+-----------------------------------------------------------------------*/
+PROC SQL;
+CREATE TABLE WORK.READMIT_30_SUM AS
+SELECT
+    MEMBERID,
+    YYMMM,
+    MAX(READMIT_30_FLAG) AS READMIT_30_FLAG
+FROM WORK.READMIT_30
+GROUP BY MEMBERID, YYMMM;
+QUIT;
+
+/*-----------------------------------------------------------------------
+  FINAL UTILIZATION SUMMARY
+-----------------------------------------------------------------------*/
+PROC SQL;
+CREATE TABLE WORK.UTIL_SUMMARY AS
+SELECT
+    A.MEMBERID,
+    A.YYMMM,
+    COALESCE(B.IP_ADMIT_CNT,0)   AS IP_ADMIT_CNT,
+    COALESCE(B.IP_DAYS,0)        AS IP_DAYS,
+    COALESCE(C.ED_VISIT_CNT,0)   AS ED_VISIT_CNT,
+    COALESCE(D.OP_VISIT_CNT,0)   AS OP_VISIT_CNT,
+    COALESCE(E.READMIT_30_FLAG,0) AS READMIT_30_FLAG
+FROM WORK.HRP_COST A
+LEFT JOIN WORK.IP_UTIL        B ON A.MEMBERID=B.MEMBERID AND A.YYMMM=B.YYMMM
+LEFT JOIN WORK.ED_UTIL        C ON A.MEMBERID=C.MEMBERID AND A.YYMMM=C.YYMMM
+LEFT JOIN WORK.OP_UTIL        D ON A.MEMBERID=D.MEMBERID AND A.YYMMM=D.YYMMM
+LEFT JOIN WORK.READMIT_30_SUM E ON A.MEMBERID=E.MEMBERID AND A.YYMMM=E.YYMMM;
+QUIT;
+
+/*-----------------------------------------------------------------------
+  QA CHECK
+-----------------------------------------------------------------------*/
+PROC SQL;
+SELECT
+    COUNT(DISTINCT MEMBERID) AS UTIL_MEMBERS
+FROM WORK.UTIL_SUMMARY;
+QUIT;
+
+
+
+/**************************************************************************
+ PHASE 1E: ACG, EDC & CLINICAL LOGIC
+**************************************************************************/
+
+/*-----------------------------------------------------------------------
+  ACG HISTORY (PRIOR YEAR)
+-----------------------------------------------------------------------*/
+PROC SQL;
+CONNECT TO ODBC
+(
+  DATASRC=IRADW_SAWESCPDSAPP00_UAT_IND
+  USER="&cdisql_id."
+  PW="&cdisql_pw."
+);
+
+CREATE TABLE WORK.ACGDATA_HISTORY AS
+SELECT DISTINCT
+    PATIENT_ID        AS MEMBERID,
+    RUN_YM,
+    ACG_SCORE,
+    ACG_RISK,
+    EDC_CODES
+FROM DM_M360.ACG
+WHERE RUN_YM = &PYPM.;
+DISCONNECT FROM ODBC;
+QUIT;
+
+/*-----------------------------------------------------------------------
+  ACG CURRENT (CURRENT YEAR)
+-----------------------------------------------------------------------*/
+PROC SQL;
+CONNECT TO ODBC
+(
+  DATASRC=IRADW_SAWESCPDSAPP00_UAT_IND
+  USER="&cdisql_id."
+  PW="&cdisql_pw."
+);
+
+CREATE TABLE WORK.ACGDATA_CURRENT AS
+SELECT DISTINCT
+    PATIENT_ID        AS MEMBERID,
+    RUN_YM,
+    ACG_SCORE,
+    ACG_RISK,
+    EDC_CODES
+FROM DM_M360.ACG
+WHERE RUN_YM = &CYPM.;
+DISCONNECT FROM ODBC;
+QUIT;
+
+/*-----------------------------------------------------------------------
+  DEDUPLICATE ACG CURRENT
+-----------------------------------------------------------------------*/
+PROC SORT DATA=WORK.ACGDATA_CURRENT;
+BY MEMBERID DESCENDING RUN_YM;
+RUN;
+
+DATA WORK.ACGDATA_CURRENT;
+SET WORK.ACGDATA_CURRENT;
+BY MEMBERID;
+IF FIRST.MEMBERID;
+RUN;
+
+/*-----------------------------------------------------------------------
+  EDC EXTRACTION
+-----------------------------------------------------------------------*/
+DATA WORK.EDC_RAW;
+SET WORK.ACGDATA_CURRENT;
+LENGTH EDC $6;
+
+DO I = 1 TO COUNTW(EDC_CODES,' ');
+    EDC = SCAN(EDC_CODES,I,' ');
+    OUTPUT;
+END;
+
+KEEP MEMBERID EDC;
+RUN;
+
+/*-----------------------------------------------------------------------
+  EDC TRANSPOSE
+-----------------------------------------------------------------------*/
+PROC SORT DATA=WORK.EDC_RAW NODUPKEY;
+BY MEMBERID EDC;
+RUN;
+
+PROC TRANSPOSE DATA=WORK.EDC_RAW
+               OUT=WORK.EDC_T (DROP=_NAME_)
+               PREFIX=EDC_;
+BY MEMBERID;
+VAR EDC;
+RUN;
+
+/*-----------------------------------------------------------------------
+  CHRONIC CONDITION FLAGS
+-----------------------------------------------------------------------*/
+DATA WORK.CHRONIC_FLAGS;
+SET WORK.EDC_T;
+
+ARRAY EDCV {*} EDC_:;
+CHRONIC_CNT = 0;
+
+DO I = 1 TO DIM(EDCV);
+    IF NOT MISSING(EDCV[I]) THEN CHRONIC_CNT + 1;
+END;
+
+DROP I;
+RUN;
+
+/*-----------------------------------------------------------------------
+  CANCER FLAGS (POP ORIGINAL ICD LOGIC)
+-----------------------------------------------------------------------*/
+DATA WORK.CANCER_FLAGS;
+SET WORK.ALL_CLAIMS;
+LENGTH CANCER_FLAG 3;
+
+IF SUBSTR(ICD10DX1,1,1) = 'C' THEN CANCER_FLAG = 1;
+ELSE CANCER_FLAG = 0;
+
+KEEP MEMBERID YYMMM CANCER_FLAG;
+RUN;
+
+PROC SQL;
+CREATE TABLE WORK.CANCER_SUM AS
+SELECT
+    MEMBERID,
+    MAX(CANCER_FLAG) AS CANCER_FLAG
+FROM WORK.CANCER_FLAGS
+GROUP BY MEMBERID;
+QUIT;
+
+/*-----------------------------------------------------------------------
+  BEHAVIORAL HEALTH FLAGS
+-----------------------------------------------------------------------*/
+DATA WORK.BH_FLAGS;
+SET WORK.ALL_CLAIMS;
+LENGTH BH_FLAG 3;
+
+IF SUBSTR(ICD10DX1,1,1) IN ('F') THEN BH_FLAG = 1;
+ELSE BH_FLAG = 0;
+
+KEEP MEMBERID YYMMM BH_FLAG;
+RUN;
+
+PROC SQL;
+CREATE TABLE WORK.BH_SUM AS
+SELECT
+    MEMBERID,
+    MAX(BH_FLAG) AS BH_FLAG
+FROM WORK.BH_FLAGS
+GROUP BY MEMBERID;
+QUIT;
+
+/*-----------------------------------------------------------------------
+  FINAL CLINICAL SUMMARY
+-----------------------------------------------------------------------*/
+PROC SQL;
+CREATE TABLE WORK.CLINICAL_SUMMARY AS
+SELECT
+    A.MEMBERID,
+    A.ACG_SCORE,
+    A.ACG_RISK,
+    B.CHRONIC_CNT,
+    C.CANCER_FLAG,
+    D.BH_FLAG
+FROM WORK.ACGDATA_CURRENT A
+LEFT JOIN WORK.CHRONIC_FLAGS B ON A.MEMBERID=B.MEMBERID
+LEFT JOIN WORK.CANCER_SUM   C ON A.MEMBERID=C.MEMBERID
+LEFT JOIN WORK.BH_SUM       D ON A.MEMBERID=D.MEMBERID;
+QUIT;
+
+/*-----------------------------------------------------------------------
+  QA CHECK
+-----------------------------------------------------------------------*/
+PROC SQL;
+SELECT
+    COUNT(DISTINCT MEMBERID) AS CLINICAL_MEMBERS
+FROM WORK.CLINICAL_SUMMARY;
+QUIT;
+
+/**************************************************************************
+ PHASE 1F: ENGAGEMENT, GII, AVOIDABLE ED & DX ACUITY
+**************************************************************************/
+
+/*-----------------------------------------------------------------------
+  JIVA DISEASE MANAGEMENT ENROLLMENT
+-----------------------------------------------------------------------*/
+PROC SQL;
+CONNECT TO ODBC
+(
+  DATASRC=EDWPROD2_DWUSER
+  AUTHDOMAIN=EDWPROD2_DWUSER_LOGIN
+);
+
+CREATE TABLE WORK.JIVA_DM AS
+SELECT DISTINCT
+    SUBSCRIBER_ID       AS MEMBERID,
+    PROGRAM_NAME,
+    ENROLLMENT_STATUS,
+    ENROLLMENT_DATE,
+    DISENROLLMENT_DATE
+FROM AODATAMART.DBO.DM_ALL_LOB_JIVA
+WHERE ENROLLMENT_STATUS = 'Active';
+DISCONNECT FROM ODBC;
+QUIT;
+
+/*-----------------------------------------------------------------------
+  JIVA EPISODES
+-----------------------------------------------------------------------*/
+PROC SQL;
+CONNECT TO ODBC
+(
+  DATASRC=EDWPROD2_DWUSER
+  AUTHDOMAIN=EDWPROD2_DWUSER_LOGIN
+);
+
+CREATE TABLE WORK.JIVA_EPISODES AS
+SELECT DISTINCT
+    SUBSCRIBER_ID       AS MEMBERID,
+    EPISODE_NAME,
+    EPISODE_STATUS,
+    EPISODE_START_DATE,
+    EPISODE_END_DATE
+FROM AODATAMART.DBO.EPISODE_ALL_LOB_JIVA
+WHERE EPISODE_STATUS IN ('Open','Active');
+DISCONNECT FROM ODBC;
+QUIT;
+
+/*-----------------------------------------------------------------------
+  JIVA ENGAGEMENT FLAGS
+-----------------------------------------------------------------------*/
+PROC SQL;
+CREATE TABLE WORK.JIVA_FLAGS AS
+SELECT
+    MEMBERID,
+    MAX(CASE WHEN PROGRAM_NAME IS NOT NULL THEN 1 ELSE 0 END) AS DM_FLAG,
+    MAX(CASE WHEN EPISODE_NAME IS NOT NULL THEN 1 ELSE 0 END) AS EPISODE_FLAG
+FROM
+(
+    SELECT MEMBERID, PROGRAM_NAME, . AS EPISODE_NAME FROM WORK.JIVA_DM
+    UNION ALL
+    SELECT MEMBERID, . AS PROGRAM_NAME, EPISODE_NAME FROM WORK.JIVA_EPISODES
+)
+GROUP BY MEMBERID;
+QUIT;
+
+/*-----------------------------------------------------------------------
+  GII LOGIC (POP ORIGINAL)
+-----------------------------------------------------------------------*/
+DATA WORK.GII_FLAGS;
+SET GII.GII_DATA_PULL;
+
+KEEP MEMBERID GII_FLAG;
+RUN;
+
+/*-----------------------------------------------------------------------
+  AVOIDABLE ED VISITS
+-----------------------------------------------------------------------*/
+DATA WORK.ED_AVOIDABLE;
+SET WORK.ALL_CLAIMS;
+
+WHERE CLAIM_TYPE = 'ED'
+  AND ICD10DX1 IN (&HELLO.);
+
+AVOIDABLE_ED_FLAG = 1;
+KEEP MEMBERID YYMMM AVOIDABLE_ED_FLAG;
+RUN;
+
+PROC SQL;
+CREATE TABLE WORK.ED_AVOID_SUM AS
+SELECT
+    MEMBERID,
+    MAX(AVOIDABLE_ED_FLAG) AS AVOIDABLE_ED_FLAG
+FROM WORK.ED_AVOIDABLE
+GROUP BY MEMBERID;
+QUIT;
+
+/*-----------------------------------------------------------------------
+  DX ACUITY LOGIC
+-----------------------------------------------------------------------*/
+DATA WORK.DX_ACUITY;
+SET WORK.ALL_CLAIMS;
+
+LENGTH DX_ACUITY $50;
+
+IF POSDESCR = 'EMERGENCY' THEN DO;
+    IF DIAG_ACUITY_DESC IN (&DXACUTY.) THEN DX_ACUITY = DIAG_ACUITY_DESC;
+END;
+
+KEEP MEMBERID YYMMM DX_ACUITY;
+RUN;
+
+PROC SQL;
+CREATE TABLE WORK.DX_ACUITY_SUM AS
+SELECT
+    MEMBERID,
+    MAX(DX_ACUITY) AS DX_ACUITY
+FROM WORK.DX_ACUITY
+GROUP BY MEMBERID;
+QUIT;
+
+/*-----------------------------------------------------------------------
+  FINAL ENGAGEMENT SUMMARY
+-----------------------------------------------------------------------*/
+PROC SQL;
+CREATE TABLE WORK.ENGAGEMENT_SUMMARY AS
+SELECT
+    A.MEMBERID,
+    COALESCE(B.DM_FLAG,0)          AS DM_FLAG,
+    COALESCE(B.EPISODE_FLAG,0)     AS EPISODE_FLAG,
+    COALESCE(C.GII_FLAG,0)         AS GII_FLAG,
+    COALESCE(D.AVOIDABLE_ED_FLAG,0) AS AVOIDABLE_ED_FLAG,
+    E.DX_ACUITY
+FROM WORK.IRADW_ELIG A
+LEFT JOIN WORK.JIVA_FLAGS     B ON A.MEMBERID=B.MEMBERID
+LEFT JOIN WORK.GII_FLAGS      C ON A.MEMBERID=C.MEMBERID
+LEFT JOIN WORK.ED_AVOID_SUM   D ON A.MEMBERID=D.MEMBERID
+LEFT JOIN WORK.DX_ACUITY_SUM  E ON A.MEMBERID=E.MEMBERID;
+QUIT;
+
+/*-----------------------------------------------------------------------
+  QA CHECK
+-----------------------------------------------------------------------*/
+PROC SQL;
+SELECT
+    COUNT(DISTINCT MEMBERID) AS ENGAGED_MEMBERS
+FROM WORK.ENGAGEMENT_SUMMARY;
+QUIT;
+
+/**************************************************************************
+ PHASE 1G: FINAL POP ASSEMBLY & OUTPUTS
+**************************************************************************/
+
+/*-----------------------------------------------------------------------
+  FINAL POP ANALYTIC TABLE
+-----------------------------------------------------------------------*/
+PROC SQL;
+CREATE TABLE WORK.POP_ASSESSMENT_FINAL AS
+SELECT
+    /* ---------------- Enrollment ---------------- */
+    E.MEMBERID,
+    E.MEMBERUCI,
+    E.SUBSCRIBER_KEY,
+    E.ELIGIBILITY_YM,
+    E.FS_PRODUCT,
+    E.CML_FLAG,
+    E.METALLICLEVEL,
+    E.PCP_NAME,
+    E.PCP_GROUP_NAME,
+    E.PrimaryLocation,
+    E.COUNTY,
+
+    /* ---------------- Utilization & Cost ---------------- */
+    U.IP_ADMIT_CNT,
+    U.IP_DAYS,
+    U.ED_VISIT_CNT,
+    U.OP_VISIT_CNT,
+    U.READMIT_30_FLAG,
+    C.TOTAL_PAID,
+    C.TOTAL_ALLOWED,
+    C.MED_PAID,
+    C.RX_PAID,
+
+    /* ---------------- Clinical ---------------- */
+    CL.ACG_SCORE,
+    CL.ACG_RISK,
+    CL.CHRONIC_CNT,
+    CL.CANCER_FLAG,
+    CL.BH_FLAG,
+
+    /* ---------------- Engagement ---------------- */
+    EN.DM_FLAG,
+    EN.EPISODE_FLAG,
+    EN.GII_FLAG,
+    EN.AVOIDABLE_ED_FLAG,
+    EN.DX_ACUITY
+
+FROM WORK.MEM_MO               E
+LEFT JOIN WORK.UTIL_SUMMARY    U  ON E.MEMBER_ID = U.MEMBERID
+LEFT JOIN WORK.HRP_COST        C  ON E.MEMBER_ID = C.MEMBERID
+LEFT JOIN WORK.CLINICAL_SUMMARY CL ON E.MEMBER_ID = CL.MEMBERID
+LEFT JOIN WORK.ENGAGEMENT_SUMMARY EN ON E.MEMBER_ID = EN.MEMBERID;
+QUIT;
+
+/*-----------------------------------------------------------------------
+  DERIVED POP FLAGS
+-----------------------------------------------------------------------*/
+DATA WORK.POP_ASSESSMENT_FINAL;
+SET WORK.POP_ASSESSMENT_FINAL;
+
+HIGH_COST_FLAG     = (TOTAL_PAID >= 50000);
+HIGH_UTIL_FLAG     = (IP_ADMIT_CNT >= 2 OR ED_VISIT_CNT >= 4);
+HIGH_RISK_FLAG     = (ACG_RISK IN ('High','Very High'));
+CHRONIC_FLAG       = (CHRONIC_CNT >= 2);
+ENGAGED_FLAG       = (DM_FLAG = 1 OR EPISODE_FLAG = 1);
+
+RUN_DATE = TODAY();
+FORMAT RUN_DATE DATE9.;
+RUN;
+
+/*-----------------------------------------------------------------------
+  QA – FINAL MEMBER COUNT
+-----------------------------------------------------------------------*/
+PROC SQL;
+SELECT COUNT(DISTINCT MEMBERID) AS FINAL_POP_MEMBERS
+FROM WORK.POP_ASSESSMENT_FINAL;
+QUIT;
+
+/*-----------------------------------------------------------------------
+  POP OUTPUT FILE 1 – SUMMARY
+-----------------------------------------------------------------------*/
+DATA _NULL_;
+SET WORK.POP_ASSESSMENT_FINAL;
+FILE TXTSRC DLM='|' LRECL=32767;
+
+PUT
+    MEMBERID
+    MEMBERUCI
+    FS_PRODUCT
+    CML_FLAG
+    COUNTY
+    METALLICLEVEL
+    HIGH_RISK_FLAG
+    HIGH_COST_FLAG
+    ENGAGED_FLAG
+;
+RUN;
+
+/*-----------------------------------------------------------------------
+  POP OUTPUT FILE 2 – DETAIL
+-----------------------------------------------------------------------*/
+DATA _NULL_;
+SET WORK.POP_ASSESSMENT_FINAL;
+FILE FINSRC DLM='|' LRECL=32767;
+
+PUT
+    MEMBERID
+    IP_ADMIT_CNT
+    IP_DAYS
+    ED_VISIT_CNT
+    OP_VISIT_CNT
+    READMIT_30_FLAG
+    TOTAL_PAID
+    TOTAL_ALLOWED
+;
+RUN;
+
+/*-----------------------------------------------------------------------
+  POP OUTPUT FILE 3 – CLINICAL & ENGAGEMENT
+-----------------------------------------------------------------------*/
+DATA _NULL_;
+SET WORK.POP_ASSESSMENT_FINAL;
+FILE DETAIL DLM='|' LRECL=32767;
+
+PUT
+    MEMBERID
+    ACG_SCORE
+    ACG_RISK
+    CHRONIC_CNT
+    CANCER_FLAG
+    BH_FLAG
+    DM_FLAG
+    EPISODE_FLAG
+    GII_FLAG
+    AVOIDABLE_ED_FLAG
+    DX_ACUITY
+;
+RUN;
+
+/*-----------------------------------------------------------------------
+  END OF POP ASSESSMENT – PHASE 1 COMPLETE
+-----------------------------------------------------------------------*/
+
+/**************************************************************************
+ PHASE 2A: M360 ENROLLMENT & DEMOGRAPHIC EXPANSION
+ SOURCE: IRADW_UAT.DM_M360.CUDA_MM (SHARED)
+**************************************************************************/
+
+/*-----------------------------------------------------------------------
+  RE-PULL CUDA_MM WITH M360 EXTENDED COLUMNS (ONCE)
+-----------------------------------------------------------------------*/
+PROC SQL;
+CONNECT TO ODBC
+(
+  DATASRC=IRADW_SAWESCPDSAPP00_UAT_IND
+  USER="&cdisql_id."
+  PW="&cdisql_pw."
+);
+
+CREATE TABLE WORK.CUDA_MM_M360 AS
+SELECT DISTINCT
+    ELIGIBILITYYEARANDMONTH,
+    MEMBERID,
+
+    /* -------- M360 DEMOGRAPHICS -------- */
+    MEMBERSTATE,
+    MEMBERTERRITORYZIP,
+    VBP_RISK_CD,
+    RATEAREAID,
+    MARKETSEGMENT,
+    MEMBERLANGUAGE,
+    DUALSTATUS,
+    DSNPFLAG,
+
+    /* -------- M360 LOB LOGIC -------- */
+    LINEOFBUSINESS AS M360_LOB,
+
+    /* -------- M360 RISK -------- */
+    RISKADJUSTMENTFACTOR
+
+FROM IRADW_UAT.DM_M360.CUDA_MM
+WHERE ELIGIBILITYYEARANDMONTH BETWEEN &BEGDT. AND &ENDDT.
+  AND BUSINESSUNIT IN (&BUS_UT.);
+DISCONNECT FROM ODBC;
+QUIT;
+
+/*-----------------------------------------------------------------------
+  KEEP LATEST ELIGIBILITY PER MEMBER
+-----------------------------------------------------------------------*/
+PROC SORT DATA=WORK.CUDA_MM_M360;
+BY MEMBERID DESCENDING ELIGIBILITYYEARANDMONTH;
+RUN;
+
+DATA WORK.CUDA_MM_M360;
+SET WORK.CUDA_MM_M360;
+BY MEMBERID;
+IF FIRST.MEMBERID;
+DROP ELIGIBILITYYEARANDMONTH;
+RUN;
+
+/*-----------------------------------------------------------------------
+  MERGE M360 ENROLLMENT COLUMNS INTO POP MEMBER TABLES
+-----------------------------------------------------------------------*/
+PROC SQL;
+CREATE TABLE WORK.MEM_MO_M360 AS
+SELECT
+    P.*,
+
+    /* -------- M360 ENROLLMENT -------- */
+    M.MEMBERSTATE,
+    M.MEMBERTERRITORYZIP,
+    M.VBP_RISK_CD,
+    M.RATEAREAID,
+    M.MARKETSEGMENT,
+    M.MEMBERLANGUAGE,
+    M.DUALSTATUS,
+    M.DSNPFLAG,
+    M.M360_LOB,
+    M.RISKADJUSTMENTFACTOR
+
+FROM WORK.MEM_MO            P
+LEFT JOIN WORK.CUDA_MM_M360 M
+  ON P.MEMBER_ID = M.MEMBERID;
+QUIT;
+
+/*-----------------------------------------------------------------------
+  REPLACE POP MEMBER SNAPSHOT WITH M360-EXPANDED VERSION
+-----------------------------------------------------------------------*/
+DATA WORK.MEM_MO;
+SET WORK.MEM_MO_M360;
+RUN;
+
+/*-----------------------------------------------------------------------
+  QA CHECK
+-----------------------------------------------------------------------*/
+PROC SQL;
+SELECT
+    COUNT(*) AS MEMBERS_AFTER_M360_ENROLLMENT
+FROM WORK.MEM_MO;
+QUIT;
+
+
+/**************************************************************************
+ PHASE 2B: M360 ACG SUPERCOLUMN INTEGRATION
+ SOURCE: DM_M360.ACG
+**************************************************************************/
+
+/*-----------------------------------------------------------------------
+  PULL LATEST M360 ACG RUN (AUTHORITATIVE)
+-----------------------------------------------------------------------*/
+PROC SQL;
+CONNECT TO ODBC
+(
+  DATASRC=IRADW_SAWESCPDSAPP00_UAT_IND
+  USER="&cdisql_id."
+  PW="&cdisql_pw."
+);
+
+CREATE TABLE WORK.ACG_M360_RAW AS
+SELECT *
+FROM DM_M360.ACG
+WHERE RUN_YM = (
+    SELECT MAX(RUN_YM)
+    FROM DM_M360.ACG
+);
+DISCONNECT FROM ODBC;
+QUIT;
+
+/*-----------------------------------------------------------------------
+  STANDARDIZE MEMBER KEY
+-----------------------------------------------------------------------*/
+DATA WORK.ACG_M360;
+SET WORK.ACG_M360_RAW;
+MEMBERID = PATIENT_ID;
+DROP PATIENT_ID;
+RUN;
+
+/*-----------------------------------------------------------------------
+  DEDUPLICATE TO ONE ROW PER MEMBER
+-----------------------------------------------------------------------*/
+PROC SORT DATA=WORK.ACG_M360;
+BY MEMBERID DESCENDING RUN_YM;
+RUN;
+
+DATA WORK.ACG_M360;
+SET WORK.ACG_M360;
+BY MEMBERID;
+IF FIRST.MEMBERID;
+RUN;
+
+/*-----------------------------------------------------------------------
+  MERGE M360 ACG INTO POP CLINICAL SUMMARY
+-----------------------------------------------------------------------*/
+PROC SQL;
+CREATE TABLE WORK.CLINICAL_SUMMARY_M360 AS
+SELECT
+    /* Keep POP clinical fields */
+    P.MEMBERID,
+    P.ACG_SCORE,
+    P.ACG_RISK,
+    P.CHRONIC_CNT,
+    P.CANCER_FLAG,
+    P.BH_FLAG,
+
+    /* Append ALL M360 ACG predictors */
+    M.*
+
+FROM WORK.CLINICAL_SUMMARY P
+LEFT JOIN WORK.ACG_M360     M
+  ON P.MEMBERID = M.MEMBERID;
+QUIT;
+
+/*-----------------------------------------------------------------------
+  REPLACE POP CLINICAL SUMMARY WITH M360-EXPANDED VERSION
+-----------------------------------------------------------------------*/
+DATA WORK.CLINICAL_SUMMARY;
+SET WORK.CLINICAL_SUMMARY_M360;
+RUN;
+
+/*-----------------------------------------------------------------------
+  QA CHECK
+-----------------------------------------------------------------------*/
+PROC SQL;
+SELECT
+    COUNT(*) AS MEMBERS_AFTER_M360_ACG
+FROM WORK.CLINICAL_SUMMARY;
+QUIT;
+
+/**************************************************************************
+ PHASE 2C: M360 SOCIAL & CARE MANAGEMENT ENRICHMENT
+**************************************************************************/
+
+/*-----------------------------------------------------------------------
+  SDOH – SOCIAL RISK (M360)
+-----------------------------------------------------------------------*/
+PROC SQL;
+CONNECT TO ODBC
+(
+  DATASRC=IRADW_SAWESCPDSAPP00_UAT_IND
+  USER="&cdisql_id."
+  PW="&cdisql_pw."
+);
+
+CREATE TABLE WORK.SDOH_RAW AS
+SELECT *
+FROM DM_M360.SDOH_SEF_SCORE
+WHERE UCI_ID IS NOT NULL;
+DISCONNECT FROM ODBC;
+QUIT;
+
+PROC SORT DATA=WORK.SDOH_RAW;
+BY UCI_ID DESCENDING SCORE_DATE;
+RUN;
+
+DATA WORK.SDOH;
+SET WORK.SDOH_RAW;
+BY UCI_ID;
+IF FIRST.UCI_ID;
+RUN;
+
+/*-----------------------------------------------------------------------
+  CARE LEVEL (LOC) – JIVA
+-----------------------------------------------------------------------*/
+PROC SQL;
+CONNECT TO ODBC
+(
+  DATASRC=EDWPROD2_DWUSER
+  AUTHDOMAIN=EDWPROD2_DWUSER_LOGIN
+);
+
+CREATE TABLE WORK.CARE_LEVEL_RAW AS
+SELECT DISTINCT
+    SUBSCRIBER_ID   AS MEMBERID,
+    LVL             AS CARE_LEVEL,
+    LVL_START_DATE,
+    LVL_END_DATE
+FROM AODATAMART.DBO.CARE_LEVEL_ALL_JIVA;
+DISCONNECT FROM ODBC;
+QUIT;
+
+PROC SORT DATA=WORK.CARE_LEVEL_RAW;
+BY MEMBERID DESCENDING LVL_START_DATE;
+RUN;
+
+DATA WORK.CARE_LEVEL;
+SET WORK.CARE_LEVEL_RAW;
+BY MEMBERID;
+IF FIRST.MEMBERID;
+RUN;
+
+/*-----------------------------------------------------------------------
+  CARE COORDINATOR – JIVA
+-----------------------------------------------------------------------*/
+PROC SQL;
+CONNECT TO ODBC
+(
+  DATASRC=EDWPROD2_DWUSER
+  AUTHDOMAIN=EDWPROD2_DWUSER_LOGIN
+);
+
+CREATE TABLE WORK.CARE_COORD_RAW AS
+SELECT DISTINCT
+    SUBSCRIBER_ID AS MEMBERID,
+    CASE_RECORDSTATE,
+    CC_FIRST,
+    CC_LAST
+FROM AODATAMART.DBO.MEMBER_CLINICAL_CARE_HSD_JIVA;
+DISCONNECT FROM ODBC;
+QUIT;
+
+DATA WORK.CARE_COORD;
+SET WORK.CARE_COORD_RAW;
+CARE_COORD = CATX(' ', PROPCASE(CC_FIRST), PROPCASE(CC_LAST));
+KEEP MEMBERID CARE_COORD CASE_RECORDSTATE;
+RUN;
+
+/*-----------------------------------------------------------------------
+  MICROSEGMENTATION (M360)
+-----------------------------------------------------------------------*/
+PROC SQL;
+CONNECT TO ODBC
+(
+  DATASRC=EDWPROD2_DWUSER
+  AUTHDOMAIN=EDWPROD2_DWUSER_LOGIN
+);
+
+CREATE TABLE WORK.MICROSEG_RAW AS
+SELECT DISTINCT
+    SUBSCRIBER_ID AS MEMBERID,
+    MICROSEGMENTATION
+FROM JIVA.JIVA_MICRO_SEG_TBL;
+DISCONNECT FROM ODBC;
+QUIT;
+
+PROC SORT DATA=WORK.MICROSEG_RAW NODUPKEY;
+BY MEMBERID;
+RUN;
+
+/*-----------------------------------------------------------------------
+  COMPLETE CARE FLAG (M360)
+-----------------------------------------------------------------------*/
+PROC SQL;
+CONNECT TO ODBC
+(
+  DATASRC=EDWPROD2_DWUSER
+  AUTHDOMAIN=EDWPROD2_DWUSER_LOGIN
+);
+
+CREATE TABLE WORK.COMPLETECARE_RAW AS
+SELECT DISTINCT
+    EDW_UCI,
+    INTENSITY
+FROM PHP_COMPLETE_CARE_DTL;
+DISCONNECT FROM ODBC;
+QUIT;
+
+PROC SQL;
+CREATE TABLE WORK.COMPLETECARE AS
+SELECT
+    M.MEMBER_ID,
+    CASE WHEN C.INTENSITY IS NOT NULL THEN 1 ELSE 0 END AS COMPLETE_CARE_FLAG
+FROM WORK.MEM_MO M
+LEFT JOIN WORK.COMPLETECARE_RAW C
+  ON M.MEMBERUCI = C.EDW_UCI;
+QUIT;
+
+/*-----------------------------------------------------------------------
+  MERGE ALL M360 ENRICHMENTS INTO FINAL POP TABLE
+-----------------------------------------------------------------------*/
+PROC SQL;
+CREATE TABLE WORK.POP_ASSESSMENT_FINAL_M360 AS
+SELECT
+    P.*,
+
+    /* -------- SDOH -------- */
+    S.*,
+
+    /* -------- CARE MANAGEMENT -------- */
+    L.CARE_LEVEL,
+    L.LVL_START_DATE,
+    L.LVL_END_DATE,
+    C.CARE_COORD,
+    C.CASE_RECORDSTATE,
+
+    /* -------- SEGMENTATION -------- */
+    M.MICROSEGMENTATION,
+
+    /* -------- COMPLETE CARE -------- */
+    CC.COMPLETE_CARE_FLAG
+
+FROM WORK.POP_ASSESSMENT_FINAL P
+LEFT JOIN WORK.SDOH           S  ON P.MEMBERUCI = S.UCI_ID
+LEFT JOIN WORK.CARE_LEVEL     L  ON P.MEMBERID  = L.MEMBERID
+LEFT JOIN WORK.CARE_COORD     C  ON P.MEMBERID  = C.MEMBERID
+LEFT JOIN WORK.MICROSEG_RAW   M  ON P.MEMBERID  = M.MEMBERID
+LEFT JOIN WORK.COMPLETECARE   CC ON P.MEMBERID  = CC.MEMBER_ID;
+QUIT;
+
+/*-----------------------------------------------------------------------
+  REPLACE FINAL TABLE WITH M360-ENRICHED VERSION
+-----------------------------------------------------------------------*/
+DATA WORK.POP_ASSESSMENT_FINAL;
+SET WORK.POP_ASSESSMENT_FINAL_M360;
+RUN;
+
+/*-----------------------------------------------------------------------
+  QA CHECK
+-----------------------------------------------------------------------*/
+PROC SQL;
+SELECT COUNT(DISTINCT MEMBERID) AS MEMBERS_AFTER_M360_ENRICH
+FROM WORK.POP_ASSESSMENT_FINAL;
+QUIT;
+
+/**************************************************************************
+ PHASE 2D: FINAL OUTPUTS & QA (POP + M360)
+**************************************************************************/
+
+/*-----------------------------------------------------------------------
+  FINAL COLUMN ORDERING (POP FIRST, M360 APPENDED)
+-----------------------------------------------------------------------*/
+DATA WORK.POP_ASSESSMENT_FINAL;
+RETAIN
+    /* -------- CORE POP IDENTIFIERS -------- */
+    MEMBERID
+    MEMBERUCI
+    SUBSCRIBER_KEY
+    ELIGIBILITY_YM
+    FS_PRODUCT
+    CML_FLAG
+    COUNTY
+    METALLICLEVEL
+    PCP_NAME
+    PCP_GROUP_NAME
+    PrimaryLocation
+
+    /* -------- POP UTILIZATION -------- */
+    IP_ADMIT_CNT
+    IP_DAYS
+    ED_VISIT_CNT
+    OP_VISIT_CNT
+    READMIT_30_FLAG
+
+    /* -------- POP COST -------- */
+    TOTAL_PAID
+    TOTAL_ALLOWED
+    MED_PAID
+    RX_PAID
+
+    /* -------- POP CLINICAL -------- */
+    ACG_SCORE
+    ACG_RISK
+    CHRONIC_CNT
+    CANCER_FLAG
+    BH_FLAG
+
+    /* -------- POP ENGAGEMENT -------- */
+    DM_FLAG
+    EPISODE_FLAG
+    GII_FLAG
+    AVOIDABLE_ED_FLAG
+    DX_ACUITY
+
+    /* -------- M360 ENROLLMENT -------- */
+    MEMBERSTATE
+    MEMBERTERRITORYZIP
+    VBP_RISK_CD
+    RATEAREAID
+    MARKETSEGMENT
+    MEMBERLANGUAGE
+    DUALSTATUS
+    DSNPFLAG
+    M360_LOB
+    RISKADJUSTMENTFACTOR
+
+    /* -------- M360 ACG SUPERCOLUMNS -------- */
+    _ALL_
+;
+
+SET WORK.POP_ASSESSMENT_FINAL;
+RUN;
+
+/*-----------------------------------------------------------------------
+  QA – FINAL MEMBER RECONCILIATION
+-----------------------------------------------------------------------*/
+PROC SQL;
+SELECT
+    COUNT(DISTINCT MEMBERID)        AS FINAL_MEMBER_COUNT,
+    SUM(HIGH_COST_FLAG)             AS HIGH_COST_MEMBERS,
+    SUM(HIGH_RISK_FLAG)             AS HIGH_RISK_MEMBERS,
+    SUM(ENGAGED_FLAG)               AS ENGAGED_MEMBERS,
+    SUM(COMPLETE_CARE_FLAG)         AS COMPLETE_CARE_MEMBERS
+FROM WORK.POP_ASSESSMENT_FINAL;
+QUIT;
+
+/*-----------------------------------------------------------------------
+  POP OUTPUT FILE 1 – SUMMARY (APPENDED)
+-----------------------------------------------------------------------*/
+DATA _NULL_;
+SET WORK.POP_ASSESSMENT_FINAL;
+FILE TXTSRC DLM='|' LRECL=32767;
+PUT _ALL_;
+RUN;
+
+/*-----------------------------------------------------------------------
+  POP OUTPUT FILE 2 – DETAIL (APPENDED)
+-----------------------------------------------------------------------*/
+DATA _NULL_;
+SET WORK.POP_ASSESSMENT_FINAL;
+FILE FINSRC DLM='|' LRECL=32767;
+PUT _ALL_;
+RUN;
+
+/*-----------------------------------------------------------------------
+  POP OUTPUT FILE 3 – CLINICAL / ENGAGEMENT (APPENDED)
+-----------------------------------------------------------------------*/
+DATA _NULL_;
+SET WORK.POP_ASSESSMENT_FINAL;
+FILE DETAIL DLM='|' LRECL=32767;
+PUT _ALL_;
+RUN;
+
+/*-----------------------------------------------------------------------
+  FINAL LOG CONFIRMATION
+-----------------------------------------------------------------------*/
+%PUT NOTE: ============================================================;
+%PUT NOTE: POP ASSESSMENT + M360 MERGE COMPLETE;
+%PUT NOTE: OUTPUT FILES GENERATED:;
+%PUT NOTE: 1) PHP_CO_LOB_POP_ASSMNT_SUMMARY.txt;
+%PUT NOTE: 2) PHP_CO_LOB_POP_ASSMNT_DETAIL.txt;
+%PUT NOTE: 3) PHP_CO_LOB_POP_ASSMNT_DETAIL2.txt;
+%PUT NOTE: ============================================================;
+
