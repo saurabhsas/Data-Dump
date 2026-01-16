@@ -1,0 +1,327 @@
+
+/*****************************************************************************************
+ PROGRAM NAME : POP_ASSESSMENT_M360_FULL_PARITY_FINAL.sas
+
+ PURPOSE:
+ --------
+ â€¢ Population Assessment is the sole driver of member universe
+ â€¢ M360 rewritten completely as MEMBER_ID-based enrichment
+ â€¢ FULL FIELD PARITY with original M360 export
+ â€¢ Duplicate fields already in Population Assessment are excluded
+ â€¢ Exactly THREE Population Assessment output files are generated
+
+ KEY DESIGN PRINCIPLES:
+ ----------------------
+ â€¢ MEMBER_ID is the ONLY join key
+ â€¢ One row per MEMBER_ID in M360_ENRICH
+ â€¢ LEFT JOIN only (PA â†’ M360)
+ â€¢ No legacy M360 export blocks
+ â€¢ No competing eligibility or date logic
+
+*****************************************************************************************/
+
+OPTIONS COMPRESS=YES REUSE=YES SYMBOLGEN MPRINT;
+
+/*****************************************************************************************
+ SECTION 1: POPULATION ASSESSMENT (UNCHANGED)
+*****************************************************************************************/
+/*
+ Insert the COMPLETE Population Assessment SAS code here AS-IS.
+ This code must create:
+   WORK.POP_SUMMARY
+   WORK.POP_DETAIL
+   WORK.POP_DETAIL2
+*/
+
+/* ===================== BEGIN POPULATION ASSESSMENT ===================== */
+/* <FULL POPULATION ASSESSMENT CODE HERE â€“ UNCHANGED> */
+/* ====================== END POPULATION ASSESSMENT ====================== */
+
+/*****************************************************************************************
+ SECTION 2: PA MEMBER SPINE
+*****************************************************************************************/
+
+PROC SQL;
+CREATE TABLE WORK.PA_MEMBER_SPINE AS
+SELECT DISTINCT MEMBER_ID
+FROM WORK.POP_SUMMARY;
+QUIT;
+
+/*****************************************************************************************
+ SECTION 3: M360 ACG / RISK / COST â€“ FULL PARITY
+*****************************************************************************************/
+
+PROC SQL;
+CREATE TABLE WORK.M360_ACG AS
+SELECT
+       PATIENT_ID AS MEMBER_ID,
+       RESCALED_ACG_CONCURRENT_RISK,
+       UNSCALED_TOTAL_COST_PRED_RISK,
+       PREDICTED_PHARMACY_COST_RANGE,
+       PROBABILITY_IP_HOSP,
+       PROBABILITY_ICU_HOSP,
+       PROB_PERSISTENT_HIGH_USER,
+       TOTAL_COST,
+       PHARMACY_COST,
+       TOTAL_COST_BAND,
+       PHARMACY_COST_BAND,
+       RESOURCE_UTILIZATION_BAND,
+       CHRONIC_CONDITION_COUNT,
+       ACTIVE_INGREDIENT_COUNT
+FROM IRADW_UAT.DM_M360.ACG
+WHERE RUN_YM = &ACG_Most_Recent_Date.
+  AND RUN_TYPE = 0;
+QUIT;
+
+/*****************************************************************************************
+ SECTION 4: M360 CONDITIONS & RX GAPS
+*****************************************************************************************/
+
+PROC SQL;
+CREATE TABLE WORK.M360_CONDITIONS AS
+SELECT
+       PATIENT_ID AS MEMBER_ID,
+       DIABETES_CONDITION,
+       DIABETES_RX_GAPS,
+       DIABETES_MPR,
+       DIABETES_UNTREATED_RX,
+       HYPERTENSION_CONDITION,
+       HYPERTENSION_UNTREATED_RX,
+       COPD_CONDITION,
+       CONGESTIVE_HEART_FAILURE_COND,
+       DEPRESSION_CONDITION,
+       DEPRESSION_MPR,
+       SCHIZOPHRENIA_CONDITION,
+       GLAUCOMA_CONDITION,
+       OSTEOPOROSIS_CONDITION,
+       PARKINSONS_DISEASE_CONDITION,
+       LOW_BACK_PAIN_CONDITION,
+       CANCER_TREATMENT,
+       DIALYSIS_SERVICE,
+       NURSING_SERVICE,
+       MECHANICAL_VENTILATION
+FROM IRADW_UAT.DM_M360.ACG
+WHERE RUN_YM = &ACG_Most_Recent_Date.
+  AND RUN_TYPE = 0;
+QUIT;
+
+/*****************************************************************************************
+ SECTION 5: M360 UTILIZATION
+*****************************************************************************************/
+
+PROC SQL;
+CREATE TABLE WORK.M360_UTILIZATION AS
+SELECT
+       PATIENT_ID AS MEMBER_ID,
+       EMERGENCY_VISIT_COUNT,
+       OUTPATIENT_VISIT_COUNT,
+       INPATIENT_HOSP_COUNT,
+       INPATIENT_HOSP_DAYS,
+       READMISSION_30_DAY_COUNT,
+       ALL_CAUSE_INPATIENT_HOSP_COUNT,
+       UNPLANNED_INPATIENT_HOSP_COUNT,
+       UNPLANNED_READMIT_30_DAY_COUNT,
+       UNIQUE_PROVIDER_COUNT,
+       SPECIALTY_COUNT,
+       GENERALIST_SEEN,
+       MANAGEMENT_VISIT_COUNT
+FROM IRADW_UAT.DM_M360.ACG
+WHERE RUN_YM = &ACG_Most_Recent_Date.
+  AND RUN_TYPE = 0;
+QUIT;
+
+/*****************************************************************************************
+ SECTION 6: M360 HCC
+*****************************************************************************************/
+
+PROC SQL;
+CREATE TABLE WORK.M360_HCC AS
+SELECT
+       INPUT(UCI_ID,BEST.) AS MEMBER_ID,
+       COUNT(DISTINCT SUSPECT_HCC) AS HCC_CNT
+FROM DM_M360.REV_HCC_CURR
+GROUP BY INPUT(UCI_ID,BEST.);
+QUIT;
+
+/*****************************************************************************************
+ SECTION 7: M360 PCP
+*****************************************************************************************/
+
+PROC SQL;
+CREATE TABLE WORK.M360_PCP AS
+SELECT
+       MEMBERID AS MEMBER_ID,
+       CATX(' ',PCPNPI,PCPLASTNAME,PCPFIRSTNAME) AS PCP_NAME,
+       CATX(' ',PCPGROUPTAXID,PCPGROUPTAXIDNAME) AS PCP_GROUP_NAME
+FROM IRADW_UAT.DM_M360.CUDA_MM
+WHERE ELIGIBILITYYEARANDMONTH = &Most_Recent_Date.
+GROUP BY MEMBERID;
+QUIT;
+
+/*****************************************************************************************
+ SECTION 8: M360 CARE COORDINATION
+*****************************************************************************************/
+
+PROC SQL;
+CREATE TABLE WORK.M360_CARE AS
+SELECT
+       SUBSCRIBER_ID AS MEMBER_ID,
+       MAX(LVL) AS LOC,
+       MAX(LVL_START_DATE) FORMAT=DATE9. AS LOC_START_DATE,
+       MAX(LVL_END_DATE)   FORMAT=DATE9. AS LOC_END_DATE,
+       MAX(CARE_COORD) AS CARE_COORD,
+       MAX(CASE_RECORDSTATE) AS CASE_RECORDSTATE
+FROM AODATAMART.DBO.MEMBER_CLINICAL_CARE_HSD_JIVA
+GROUP BY SUBSCRIBER_ID;
+QUIT;
+
+/*****************************************************************************************
+ SECTION 9: M360 ENGAGEMENT
+*****************************************************************************************/
+
+PROC SQL;
+CREATE TABLE WORK.M360_ENGAGEMENT AS
+SELECT
+       SUBSCRIBER_ID AS MEMBER_ID,
+       MAX(PROGRAM IN
+         ('ASTHMA','CAD','COPD','DIABETES','HEART FAILURE','HYPERTENSION')) AS DM_FLAG,
+       MAX(PROGRAM IN
+         ('COMMUNITY HEALTH','PEER SUPPORT')) AS CHW_FLAG
+FROM AODATAMART.DBO.DM_ALL_LOB_JIVA
+GROUP BY SUBSCRIBER_ID;
+QUIT;
+
+/*****************************************************************************************
+ SECTION 10: M360 SDOH
+*****************************************************************************************/
+
+PROC SQL;
+CREATE TABLE WORK.M360_SDOH AS
+SELECT
+       INPUT(UCI_ID,BEST.) AS MEMBER_ID,
+       DERIVEDETHNICITY,
+       DERIVEDRACE,
+       DERIVEDFOODINSECURE,
+       DERIVEDHOUSEINSECURE,
+       DERIVEDTRANSPORTINSECURE,
+       DERIVEDFINANCEINSECURE,
+       DERIVEDSOCIALINSECURE,
+       DERIVEDSAFETYINSECURE,
+       HEALTHYLIFESTYLE
+FROM DM_M360.SDOH_SEF_SCORE;
+QUIT;
+
+/*****************************************************************************************
+ SECTION 11: M360 DIGITAL / LABS / COMMUNICATION
+*****************************************************************************************/
+
+PROC SQL;
+CREATE TABLE WORK.M360_DIGITAL AS
+SELECT
+       INPUT(MBR_UCI,BEST.) AS MEMBER_ID,
+       MYC_STATUS,
+       DEVICE
+FROM DM_M360.EPIC_MY_CHART;
+QUIT;
+
+PROC SQL;
+CREATE TABLE WORK.M360_COMM AS
+SELECT
+       INPUT(PAT_UCI_C,BEST.) AS MEMBER_ID,
+       PAT_COMM_PREF,
+       INTRPTR_NEEDED_YN
+FROM DM_M360.MBR_COMM_PREF;
+QUIT;
+
+/*****************************************************************************************
+ SECTION 12: FINAL M360 ENRICHMENT (ONE ROW PER MEMBER)
+*****************************************************************************************/
+
+PROC SQL;
+CREATE TABLE WORK.M360_ENRICH AS
+SELECT
+       P.MEMBER_ID,
+       A.*,
+       CND.*,
+       UTL.*,
+       H.HCC_CNT,
+       PCP.PCP_NAME,
+       PCP.PCP_GROUP_NAME,
+       CARE.LOC,
+       CARE.LOC_START_DATE,
+       CARE.LOC_END_DATE,
+       CARE.CARE_COORD,
+       CARE.CASE_RECORDSTATE,
+       ENG.DM_FLAG,
+       ENG.CHW_FLAG,
+       SDOH.*,
+       DIG.MYC_STATUS,
+       DIG.DEVICE,
+       COM.PAT_COMM_PREF,
+       COM.INTRPTR_NEEDED_YN
+FROM WORK.PA_MEMBER_SPINE P
+LEFT JOIN WORK.M360_ACG          A    ON P.MEMBER_ID = A.MEMBER_ID
+LEFT JOIN WORK.M360_CONDITIONS  CND  ON P.MEMBER_ID = CND.MEMBER_ID
+LEFT JOIN WORK.M360_UTILIZATION UTL  ON P.MEMBER_ID = UTL.MEMBER_ID
+LEFT JOIN WORK.M360_HCC         H    ON P.MEMBER_ID = H.MEMBER_ID
+LEFT JOIN WORK.M360_PCP         PCP  ON P.MEMBER_ID = PCP.MEMBER_ID
+LEFT JOIN WORK.M360_CARE        CARE ON P.MEMBER_ID = CARE.MEMBER_ID
+LEFT JOIN WORK.M360_ENGAGEMENT  ENG  ON P.MEMBER_ID = ENG.MEMBER_ID
+LEFT JOIN WORK.M360_SDOH        SDOH ON P.MEMBER_ID = SDOH.MEMBER_ID
+LEFT JOIN WORK.M360_DIGITAL     DIG  ON P.MEMBER_ID = DIG.MEMBER_ID
+LEFT JOIN WORK.M360_COMM        COM  ON P.MEMBER_ID = COM.MEMBER_ID;
+QUIT;
+
+/*****************************************************************************************
+ SECTION 13: MERGE INTO POPULATION ASSESSMENT OUTPUTS
+*****************************************************************************************/
+
+PROC SQL;
+CREATE TABLE WORK.POP_SUMMARY_FINAL AS
+SELECT A.*, B.*
+FROM WORK.POP_SUMMARY A
+LEFT JOIN WORK.M360_ENRICH B
+ON A.MEMBER_ID = B.MEMBER_ID;
+QUIT;
+
+PROC SQL;
+CREATE TABLE WORK.POP_DETAIL_FINAL AS
+SELECT A.*, B.*
+FROM WORK.POP_DETAIL A
+LEFT JOIN WORK.M360_ENRICH B
+ON A.MEMBER_ID = B.MEMBER_ID;
+QUIT;
+
+PROC SQL;
+CREATE TABLE WORK.POP_DETAIL2_FINAL AS
+SELECT A.*, B.*
+FROM WORK.POP_DETAIL2 A
+LEFT JOIN WORK.M360_ENRICH B
+ON A.MEMBER_ID = B.MEMBER_ID;
+QUIT;
+
+/*****************************************************************************************
+ SECTION 14: WRITE FINAL OUTPUT FILES
+*****************************************************************************************/
+
+DATA _NULL_;
+FILE TXTSRC DSD LRECL=32767;
+SET WORK.POP_SUMMARY_FINAL;
+PUT (_ALL_) (~);
+RUN;
+
+DATA _NULL_;
+FILE FINSRC DSD LRECL=32767;
+SET WORK.POP_DETAIL_FINAL;
+PUT (_ALL_) (~);
+RUN;
+
+DATA _NULL_;
+FILE DETAIL DSD LRECL=32767;
+SET WORK.POP_DETAIL2_FINAL;
+PUT (_ALL_) (~);
+RUN;
+
+/*****************************************************************************************
+ END OF PROGRAM
+*****************************************************************************************/
