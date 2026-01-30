@@ -1,0 +1,385 @@
+-----------------------------------------------------------------------------------------------------------------------------------------------------------
+Member 360:
+
+Executive Summary
+This dashboard will serve as an on-demand tool for Member 360, Identification of intervention population and provide tools for initial feasibility assesmnet. Define initial population for interention and provide overview of key metrics.
+
+
+Data Defination:
+All claims – Medical and Rx. Medical claims Include HealthEdge (HRP) – Inpatient, outpatient, professional + All TPAs encounters (Magellan BH claims, Dental, Vision, Capital/Optum Rx, Transportation etc.).
+Enriched data from Johns Hopkins ACG grouper (predictive analytics tool) and JIVA care management, limited Epic data for members who are our patients (e.g., Epic Mychart data showing digital engagement), Social Determinants of Health (SDOH) data harvested from Epic, JiVA, HRP, purchased data from Acxoim.
+
+
+KPI Definitions:
+Inpatient Hospitalization Count: Count of Acute care Inpatient stays for causes that are not related to child-birth and injury.
+
+All Cause Inpatient Hospitalizations: Count of acute care inpatient stays asscoiated with admissions for any reason.
+
+Unplanned Inpatient Hospitalizations: Count of acute care inpatient stays not associated with a planned procedure. The unplanned patient hospitalization count field is a subset of the inpatient hospitalization count.
+
+Readmissions 30 Day: Count of the number of acute care inpatient hospitalizations within 30 days of a previous inpatient discharge. The readmission 30 day count field is a subset of the all cause inpatient hospitalization count.
+
+Unplanned Readmissions 30 Day: Count of the number of unplanned acute care inpatient hospitalizations within 30 days of a previous inpatient hospitalization. The unplanned readmission 30 day count field is a subset of the inpatient hospitalization count.
+
+Pharmacy Cost Band: A banded indicator of historic pharmacy costs based upon pharmacy cost percentiles.
+
+Total Cost Band: A banded indicator of historic total costs based upon total cost percentiles.
+
+Rescaled Scores: Unscaled Scores are resclaed so that  mean of the population is 1.0.
+
+Resource Utilization Band: Aggregations of ACGs based upon estimates of concurrent resource that are used to provide a way of separating the population into broad co-morbidity groupings.
+
+Unscaled Concurrent Risk Score: A concurrent total cost risk for this patient for the observation period. Based upon a regression model against a reference population (with a mean of 1.0), the predicted value is expressed as a relative weight.
+
+Age-Gender Concurrent Risk Score: A concurrent weight assigned to this patient based upon their age-sex mix using local cost data. The weight for each age band and gender is calculated as the simple average total cost of all individuals assigned to each category divided by the average total cost of all individuals in the source data file.
+
+Unscaled Total Cost Predicted Risk: The estimated total costs (including pharmacy costs) for this patient for the year following the observation period.
+
+Predicted Pharmacy Cost Range: A dollar range indicating the estimated pharmacy costs for this patient for the year following the observation period.
+
+Probability Persistent High User: Probability that this patient will be in the top 20% of users in the population for four consecutive half year periods.
+
+Probability IP Hospitalization: The probability that this patient will have an inpatient hospitalization in the year following the observation period.
+
+-----------------------------------------------------------------------------------------------------------------------------------------------------------
+
+Population Assessment:
+Executive Summary: 
+
+This dashboard is a high level analytical assessment of populations defined by Line Of Business(LOB), by Group ID's or PMG/Non-PMG. The aim is for opportunity identification through population assessment. This dashboard can be used to provide insights for proactive efforts in cost efficiency initiatives and clinical program development tailored to unique and specific needs inherent to each of the populations. 
+
+· The assessment starts with an overview of volume, demographics, cost distribution, top 10 disease prevalence conditions and an analytic breakout for categorizing outreach by High and Moderate cost segments.
+· This analysis then does a deep dive to examine High and Moderate cost segments from financial, utilization and clinical perspectives.
+
+Who are the Members and What does the Population look like?
+Membership Snapshort, Cost Contribution of Membership, Top Conditions of Members
+
+What is the Behavior of Population by Total Cost?
+Cost Segmentation, Behaviour by total cost, Cost Composition, Prevelant Diagnosis
+
+Where are Opportunities for Intervention and Cost Efficiencies?
+Avoidable ED Visits, Avoidable IP Admits, Pharmacy, GII Impactibilty, Top Providers, SDoH
+
+Current Care Management Engagement Profiles
+
+Key Business Initiative:This dashboard supports 2021 Strategic Initiatives and Milestones relating to Lowering Total Cost of Care.
+-----------------------------------------------------------------------------------------------------------------------------------------------------------
+-----------------------------------------------------------------------------------------------------------------------------------------------------------
+PHP Health Equity Dashboard
+
+Description *
+This dashboard was built in support of a 2021 Promise One Presbyterian Leadership Team (OPLT) strategic initiative. 
+The initial phase of the project supports segmentation analysis for 14 priority measures selected by Dr. Jason Mitchell, Dr. Norbert Topf, Leigh Caswell and Dr. Darcie Robran-Marquez.
+
+Intended use
+The dashboard is intended to help improve equity in health and healthcare outcomes.
+
+Purpose
+The purpose of this dashboard is to derive insights into factors that may negatively impact members’ health due to external stresses within the community, 
+to the member individually and to improve equity in health and health outcomes
+
+Current Scope
+The initial phase of the project supports segmentation analysis for 16 priority HEDIS measures.
+
+Measure Descriptions
+Note - Administrative measure end-of-year completion rates are calculated based on data sources accessible to PHP (administrative data only), Hybrid measure end-of-year completion rates are based on a sample population from the denominator with additional data mining (e.g. at a provider's office) for completion status. For Hybrid measures, data in this dashboard is based on administrative data only and may not align with reported end-of-year rates. 
+
+1. Breast Cancer Screening (BCS): Administrative Measure - Assesses women 50–74 years of age who had at least one mammogram to screen for breast cancer in the past two years.
+Measure source: Inovalon Data Mart. Population: PHP
+
+2. Childhood Immunization Status (CIS) – Combination 7: Hybrid Measure - Assesses children 2 years of age who had Combination 7 vaccines by their second birthday. Combination 7 includes DTaP, IPV, MMR, HiB, HepB, VZV, PCV, HepA and RV vaccinations. 
+Measure source: Inovalon Data Mart. Population: PHP  
+
+3. Colorectal Cancer Screening (COL): Hybrid Measure - Assesses adults 50–75 who had appropriate screening for colorectal cancer with any of the following tests: annual fecal occult blood test, flexible sigmoidoscopy every 5 years, colonoscopy every 10 years, computed tomography colonography every 5 years, stool DNA test every 3 years. 
+Measure source: Inovalon Data Mart. Population: PHP
+
+4. Prenatal And Postpartum Care (PPC): Hybrid Measure - Assesses access to prenatal and postpartum care. Measure source: Inovalon Data Mart. Population: PHP 
+  a. Postpartum Care: The percentage of deliveries in which women had a postpartum visit on or between 7 and 84 days after delivery.
+  b. Timeliness of Prenatal Care: The percentage of deliveries in which women had a prenatal care visit in the first trimester, on or before the enrollment start date or within 42 days of enrollment in the organization.
+ 
+5. Controlling High Blood Pressure(CBP): Hybrid Measure - The percentage of members 18–85 years of age who had a diagnosis of hypertension (HTN) and whose BP was adequately controlled (<140/90 mm Hg) during the measurement year.
+Measure source: Inovalon Data Mart. Population: PHP
+
+6. Hemoglobin A1c Control For Patients Diabetes(HBD): Hybrid Measure - The Percentage of members 18–75 years of age with diabetes (types 1 and 2) whose hemoglobin A1c (HbA1c) was at the following levels during the measurement year:
+·    HbA1c control (<8.0%)
+·    HbA1c poor control (>9.0%)
+Measure source: Inovalon Data Mart. Population: PHP
+
+7. Child And Adolescent Well Care Visits: Administrative Measure - The percentage of members 3–21 years of age who had at least one comprehensive well-care visit with a PCP or an OB/GYN practitioner during the measurement year.
+Measure source: Inovalon Data Mart. Population: PHP
+
+8.  Well Child Visits in the First fifteen (15) Months of Life (W15): Administrative Measure - The percentage of Members who turned fifteen (15) months old during the measurement year and had six (6) or more well-child visits. 
+Measure source: Inovalon Data Mart. Population: PHP
+
+9. Weight Assessment and Counseling for Nutrition and Physical Activity for Children/Adolescents (WCC): Hybrid Measure - The percentage of Members ages three (3) through seventeen (17) years of age who had an outpatient visit with a PCP or OB/GYN and who had evidence of counseling for physical activity during the measurement year. 
+Measure source: Inovalon Data Mart. Population: PHP
+
+10. Antidepressant Medication Management (AMM): Administrative Measure - The number of Members age eighteen (18) years and older as of April 30 of the measurement year who were diagnosed with a new episode of major depression during the intake period and received at least one-hundred eighty (180) Calendar Days (6 months) of continuous treatment with an antidepressant medication. 
+Measure source: Inovalon Data Mart. Population: PHP
+
+11. Initiation and Engagement of Alcohol and Other Drug Dependence Treatment (IET): Administrative Measure - The total percentage of adolescent and adult Members with a new episode of alcohol or other drug (AOD) dependence who received the following; Initiation of AOD Treatment. 
+Measure source: Inovalon Data Mart. Population: PHP
+
+12. Follow-Up After Hospitalization for Mental Illness (FUH): Administrative Measure - The percentage of discharges for members 6 years of age and older who were hospitalized for treatment of selected mental illness diagnoses and who had a follow-up visit with a mental health practitioner within 30 days after discharge. 
+Measure source: Inovalon Data Mart. Population: PHP
+
+13. Follow-Up After Emergency Department Visit for Mental Illness (FUM): Administrative Measure - The percentage of emergency department (ED) visits for members 6 years of age and older with a principal diagnosis of mental illness, who had a follow-up visit for mental illness within 30 days of the ED visit.
+Measure source: Inovalon Data Mart. Population: PHP 
+
+14. Diabetes Screening for People With Schizophrenia or Bipolar Disorder Who Are Using Antipsychotic Medications (SSD): Administrative Measure - The percentage of Members 18-64 years of age with schizophrenia, schizoaffective disorder or bipolar disorder, who were dispensed an antipsychotic medication and had a diabetes screening test during the measurement year.
+Measure source: Inovalon Data Mart. Population: PHP  
+
+SDOH Definitions
+Race – Member self-reported answers to Race question during enrollment or clinical visit 
+
+Ethnicity- Member self-reported answers to Ethnicity question during enrollment or clinical visit
+
+Healthy Lifestyle Rank - The healthy lifestyle score provides a score for member by virtue of their lifestyle habits. It is derived from variables that takes into account food habits, health consciousness and health club memberships
+ 
+Gender/Sex - Member self-reported answers to Gender/Sex question during enrollment or clinical visit 
+
+Food Insecurity – Member answered affirmatively to Food Insecurity questions asked during care assessment or clinical visit or derived from SDOH data elements (Acxiom)
+
+Transportation Insecurity – (1) Member answered affirmatively to Transportation Insecurity questions asked during care assessment or clinical visit, (2) or derived from SDOH data elements (Acxiom), or (3) had claims specific to transportation concerns
+
+Housing Insecurity – Member answered affirmatively to Housing Insecurity questions asked during care assessment or clinical visit or derived from SDOH data elements (Acxiom)
+
+Household Education Score - The household education data is derived from SDOH data elements; educated is college or graduate degree, not educated is high school or lower
+
+Social Support Insecurity – Member answered affirmatively to Social Insecurity questions asked during care assessment or clinical visit or derived from SDOH data elements (Acxiom)
+
+Area Deprivation Index - An Area Deprivation Index (ADI) is a multidimensional evaluation of a region's socioeconomic conditions that have been linked to health outcomes. ADI score ranges from 0-10, 10 being most deprived area 
+
+Social Vulnerability Index - The Social Vulnerability Index (SVI) uses U.S. Census data to determine the social vulnerability of every census tract 
+
+-----------------------------------------------------------------------------------------------------------------------------------------------------------
+-----------------------------------------------------------------------------------------------------------------------------------------------------------
+
+PDS-PMG Health Equity Insights
+
+Introduction
+This dashboard was built in support of a 2021 Promise One Presbyterian Leadership Team (OPLT) strategic initiative to improve equity in health and 
+healthcare outcomes. The initial phase of the project supports segmentation analysis for 13 priority measures selected by Dr. Jason Mitchell, Dr. Norbert Topf, 
+Leigh Caswell, and Dr. Gray Clarke.
+
+Measure Descriptions
+
+1. CDBR:1532 – Pneumonia, CMS – Percent Readmit within 30 Days, Same Facility, Acute Care: Assesses percentage of encounters with an unplanned readmission to the same facility within 30 days among encounters for acute care inpatients with a principal discharge diagnosis of pneumonia or a principal discharge diagnosis of sepsis (not including severe sepsis or septic shock) with a secondary diagnosis of pneumonia or aspiration pneumonia coded as present-on-admission (POA), and no secondary diagnosis of severe sepsis or septic shock coded as POA. Measure source: MIDAS. Population: PDS.
+
+2. CDBR:919 – Inpatients – Percent Readmit to Acute Care within 30 Days: Assesses percentage of encounters for which the patient was readmitted to the same facility within 30 days among all inpatient encounters. Measure source: MIDAS. Population: PDS.
+
+3. CDBR:993 – Sepsis, Severe – Mortality Rate: Assesses mortality rate among acute care inpatient encounters with a principal or secondary discharge diagnosis of severe sepsis. Measure source: MIDAS. Population: PDS.
+ 
+4. CDBR:996 – Septic Shock – Mortality Rate: Assesses mortality rate among acute care inpatient encounters with a principal or secondary discharge diagnosis of septic shock. Measure source: MIDAS. Population: PDS.
+
+5. Opioid Stewardship: Duration: Assesses the percent of acute pain patients with outpatient and discharge opioid prescription orders having a duration > 7 days. Acute pain patients are defined as having < 60 days duration of opioids ordered in the previous 6 months. Cough syrups with codeine and similar medications were excluded from this calculation. Measure source: Epic Clarity. Population: PDS.
+ 
+6. Opioid Stewardship: Morphine Milligram Equivalent (MME): Assesses the total daily dosage of outpatient and discharge opioid prescription orders to patients identified using the last start date of a medication in a month. The dose at the start of therapy was chosen for the MME calculation and does not account for upward or downward tapering of doses. For overlapping therapy (orders with the same start date), MME is a total of all unique medications; however, not all variations are accounted for. Orders for Buprenorphine and Cough/Cold Preparations are not included. Measure source: Epic Clarity. Population: PDS.
+ 
+7. Opioid Stewardship: Naloxone: Assesses the percent of patients with outpatient and discharge opioid prescription orders having an opioid antagonist (Naloxone) order in the previous 12 months. Only opioid orders with a duration of >= 5 days are included and orders buprenorphine-naloxone are not included in the numerator but are included in the denominator. Measure source: Epic Clarity. Population: PDS.
+
+8. Breast Cancer Screening (BCS): Assesses women 50–74 years of age who had at least one mammogram to screen for breast cancer in the past two years. Measure source: Inovalon Data Mart. Population: PMG Capitated. 
+
+9. Comprehensive Diabetes Care (CDC) – HbA1c Control: Assesses adults age 18-75 with a diagnosis of diabetes (Type 1 and Type 2) who had HbA1c control (< 8.0%) during the measurement year as identified by claim/encounter or automated laboratory data. Measure source: Inovalon Data Mart. Population: PMG Capitated. 
+
+10. Childhood Immunization Status (CIS) – Combination 7: Assesses children 2 years of age who had Combination 7 vaccines by their second birthday. Combination 7 includes DTaP, IPV, MMR, HiB, HepB, VZV, PCV, HepA and RV vaccinations. Measure source: Inovalon Data Mart. Population: PMG Capitated. 
+
+11. Colorectal Cancer Screening (COL): Assesses adults 50–75 who had appropriate screening for colorectal cancer with any of the following tests: annual fecal occult blood test, flexible sigmoidoscopy every 5 years, colonoscopy every 10 years, computed tomography colonography every 5 years, stool DNA test every 3 years. Measure source: Inovalon Data Mart. Population: PMG Capitated. 
+
+12. Prenatal and Postpartum Care (PPC): Assesses access to prenatal and postpartum care. Measure source: Inovalon Data Mart. Population: PMG Capitated. 
+a. Postpartum Care: The percentage of deliveries in which women had a postpartum visit on or between 7 and 84 days after delivery.
+b. Timeliness of Prenatal Care: The percentage of deliveries in which women had a prenatal care visit in the first trimester, on or before the enrollment start date or within 42 days of enrollment in the organization.
+
+Official Statistic page of the Dashboard has:
+Do Statistically Significant Differences in Health Outcomes Rates Exist Among Demographic and SDOH Groups?
+Introduction 
+This page shows demographic and SDOH groups that have statistically significant differences in health outcomes rates. Please refer to the Welcome page for a full list of measure definitions.
+
+Methodology 
+The largest factor category, in terms of patient count, is designated the reference category for all demographic and SDOH factors except ADI, for which "Quintile 1" is always the reference category. Measures with a binary outcome (e.g. Readmissions) are evaluated using a logistic regression model. Measures with a continuous outcome (e.g. MME) are evaluated using a linear regression model. Resultant p-values for demographic or SDOH categories that are < 0.05 are considered statistically significant. All others, excluding reference categories, are considered nonsignificant. 
+> Significant p-value < 0.05 
+> Nonsignificant p-value: >= 0.05 
+
+Inclusions & Exclusions 
+Health outcomes data are available over a rolling three-year period in the Overview tab. In this page, significant differences among demographic and SDOH groups was determined over a shorter period. Only patients that meet each measure's denominator inclusion criteria were evaluated. 
+> HEDIS measures: evaluated at year-end 2023 
+> MIDAS and Opioid Stewardship measures: evaluated for year 2023
+
+Interpretation 
+Significant: The outcome event was significantly more or less likely to occur for this group compared to the reference group (blue bars) when controlling for other demographic and SDOH factors. ‘Significantly more likely’ and ‘significantly less likely’ can be good/better (green bar) or bad/worse (orange bar) depending on the health outcome measure.  
+Nonsignificant: The outcome event was not more or less likely (grey bars) to occur for this group compared to the reference group (blue bars). 
+> Significantly Better categories: green 
+> Significantly Worse categories: orange 
+> Nonsignificant categories:  grey 
+> Reference categories: blue 
+
+Example 
+Among BMI Group categories for the All-Cause Readmissions measure, the "Underweight" group is significantly more likely, and the "Obese" and "Unknown" groups are significantly less likely to experience readmission than the "Normal/Overweight" reference population. More likely to experience readmission is undesirable, so "Underweight" is coded orange; less likely to experience readmission is desirable, so "Obese" and "Unknown" are coded green. 
+-----------------------------------------------------------------------------------------------------------------------------------------------------------
+-----------------------------------------------------------------------------------------------------------------------------------------------------------
+
+Healthy Solutions DM Outcomes : 
+(HEALTHY SOLUTIONS DISEASE MANAGEMENT OUTCOMES ALL PHP PRODUCTS REPORTING CYCLE: 202512)
+
+Executive Summary
+This dashboard provides an outcome measure analysis of the disease management (DM) program, Healthy Solutions which provides education and health coaching for members with asthma, coronary artery disease (CAD), diabetes, hypertension (HTN), chronic obstructive pulmonary disease (COPD) and congestive heart failure (CHF) (starting 2020). This dashboad can be used to provide insights for proactive efforts by monitoring changes occuring with the metrics associated with each of the conditions.
+The population includes all PHP Members in the outreach population for the Healthy Solutions DM. Program who have the aforementioned  conditions and outcomes are demonstrated utilizing clinical and utilization metrics. These measures are shown for Engaged vs Not Engaged for the Prior Period and Current Period as well as Before and After disease management (DM).
+
+Notes:
+This dashboard is based on a rolling 12 month periods. ACG data is used for many of the outcome metrics; please refer to the appendix for specific definitions.
+Includes the ability to generate separate break outs for PHP Product types: 
+Commercial; Line of business (LOB) = D-SNP, Medicare excluding line of business (LOB) D-SNP, Medicaid and All products / all participants (rollup version). In addition, drill down is available based on individual Group ID.
+
+Data:
+JIVA data records for the programs included, Facets, HRP, CDI Lab Results, ACG variables.
+
+Data update Policy: 
+Dashboard will refresh on the 20th of each month at 5 am.
+
+Content:
+-  Total Population, Total Qualified, Members Engaged, Members Not Engaged (See Appendix for Definition)
+-  Participation rate by condition
+
+
+Clinical
+•  Asthma 
+•  CAD 
+•  CAD BFAF
+•  A1C
+•  A1C BFAF 
+•  LDL BFAF 
+•  HTN BFAF
+- Engaged vs Not Engaged, Prior Period vs Current Period
+- Engaged vs Not Engaged, Prior Period vs Current Period
+- Engaged vs Not Engaged, Prior Period vs Current Period
+- Before and After disease management (DM)
+- Engaged vs Not Engaged, Prior Period vs Current Period
+- Before and After disease management (DM)
+- Engaged vs Not Engaged, Prior Period vs Current Period AND Before and After disease management (DM)
+- Engaged vs Not Engaged, Prior Period vs Current Period AND Before and After disease management (DM)
+
+ 
+Utilization
+•  Asthma EDIP 
+•  CAD EDIP
+•  Diabetes EDIP
+•  HTN EDIP
+- Emergency Visit Rate and Acute Inpatient Rate, Before and After disease management (DM)
+- Emergency Visit Rate and Acute Inpatient Rate, Before and After disease management (DM)
+- Emergency Visit Rate and Acute Inpatient Rate, Before and After disease management (DM)
+- Emergency Visit Rate and Acute Inpatient Rate, Before and After disease management (DM)
+- Emergency Visit Rate and Acute Inpatient Rate, Before and After disease management (DM)
+
+Vaccination
+•  Vaccines
+- Pneumonia and Flu for Asthma, CAD, Diabetes and Hypertension
+-----------------------------------------------------------------------------------------------------------------------------------------------------------
+-----------------------------------------------------------------------------------------------------------------------------------------------------------
+
+PHP Medicaid CISC Population Dashboard:
+Summary
+This dashboard displays detailed information for the Medicaid CISC population eligible as of the current run month. Areas of exploration include member demographics, cost, utilization, provider coverage,social determinants of health, care management, and Neuroflow engagement metrics. 
+
+Dashboard Detail
+CISC COEs include:  066, 086
+
+At a glance 
+Membership demographics by selected cohort (COE – category of eligibility) distributed by demographics and ACG metrics like resource utilization bands (RUBs) and number of chronic conditions. 
+
+Cost Profile 
+Average medical and pharmacy cost per member per year metrics distributed by regions, race, and ethnicity. 
+
+Diagnosis 
+Provides insights into the top 10 reasons for inpatient admissions, emergency department visits, and pharmacy data (by therapeutic class). 
+
+Utilization Profile 
+Provides insights into the rates of inpatient and emergency department utilization, both avoidable and all cause. 
+
+Providers 
+Provide insights into the top providers by imputed status, emergency department visits, and inpatient admissions. 
+
+Social Determinants of Health (SDOH) 
+Provides insights into members with 5 SDOH concerns; food, housing, transportation, financial, and social supports. 
+
+Care Management 
+Member care management level by region and selected category of eligibility (COE). 
+
+Important Definitions
+RUB
+Resource Utilization Bands (RUBs) is a collapse of ACGs by the combination of concurrent relative resources used and the number of comorbidities.  ACGs are health status categories, created by Johns Hopkins ACG System, defined by morbidity, age, and sex. 
+
+GII 
+Global Impactibility Index is a statistic created by Presbyterian Healthcare Services which: (1) measures the of overall “impact ability” of a member based on their health care utilization (retrospective and prospective); (2) current level of care coordination and; (3) historic pharmacy adherence as reported through ACG variables. This statistic allows prioritization of initiatives to members. Higher GII number indicates higher impactibility through intervention. 
+
+BH Diagnosis Codes:
+Adult: Any in F series of ICD-10
+Child: Trauma Based Disorders: F43, F94
+Austism Spectrum & Related Disorders: F84
+Major Mood Disorders: F33, F31, F40, F41, F42, F50, F90 
+Intellectual Disorders: F70, F71, F72, F73, F78, F79, R41 
+TBD - Disorders of Potential Interest: F30, F32, F34, F39, F44, F45, F48, F51, F52,
+ F53, F54, F55, F59, F91, F93, F95, F98, F10, F11, F12, F13, F14, F15, F16, F17, F18, F19 
+
+Non Hedis:
+Treatment Foster Care (TFC) - CISC  Claim with CPT S5145
+Treatment Foster Care (TFC) - Non‑CISC  Claim with CPT S5145
+Average Length of Stay (ALOS) - CISC    Average ALOS days from authorization data
+Average Length of Stay (ALOS) - Non‑CISC    Average ALOS days from authorization data
+Crisis Services Claim with S9485, H2011, 90839, 90840, H0030, or revenue code 0169/0513
+ER Utilization for BH   ER claim (O11) with Dx1–Dx25 starting with F or R45.851
+Newly Enrolled BH (30/45/60 days)   Magellan claim (TPP_ID=0045) within 30/45/60 days of enrollment
+Newly Enrolled Medical/Pharmacy (30/45/60 days) Medical or pharmacy claim within 30/45/60 days of enrollment
+Newly Enrolled ER/UC (30/45/60 days)    ER/UC claim (O11, O41L, P33) within 30/45/60 days of enrollment
+Any BH Service (12 months)  Magellan claim (TPP_ID=0045) in the last 12 months
+High‑Fidelity Wraparound (HFW)  Claim with CPT G9003
+Out‑of‑State (OOS)  Claim with revenue code 0190, 1001, 1002, or 1005, and provider state not NM
+EBP – TF‑CBT    Claim with 90832/90834/90837/90846/90847 + modifier HH/HE
+EBP – DBT   Claim with 90837 or 90853 + modifier HH/HE
+EBP – FFT   Claim with H2019 + modifier HH/HE (code vs definition mismatch)
+EBP – EMDR  Claim with 90832/90834/90837/90846/90847 + modifier HH/HE
+EBP – MST   Claim with H2033 + modifier HH/HE (built but not in final output)
+CCBHC   Claim with CPT T1040
+Behavioral Health Diagnosis Dx1–Dx25 starts with F or R45.851 OR any Magellan claim (TPP_ID=0045)
+School‑Based Health Centers (SBHC)  Claim with POS=03 OR servicing provider in SBHC provider list (IRADW DM_PDM.PROVIDER_LOCATION_SPECIALTY where SPECIALIZED_SERVICES='SBHC')
+-----------------------------------------------------------------------------------------------------------------------------------------------------------
+-----------------------------------------------------------------------------------------------------------------------------------------------------------
+Outreach Dashboard : 
+
+Executive Summary: 
+About this Dashboard : 
+Data Sources :
+GIC - Outreach for Gaps in Care 2025 Data                 
+HEDIS - PP_OUTPUT_MMCS - 2025
+Claims as of May 2025 
+Disease Management DM_ALL_LOB_JIVA
+Annual Wellness Visit Monthly File
+New Medicare Outreach
+GII Monthly data 
+1. Filters
+• Type: Dropdown menu to select the type of outreach. Centralized Outreach or DM (Disease Management)
+• Program - Type : Dropdown menu to choose a specific healthcare measure or program. For example:
+ If Type is Centralized Outreach then Program - Type will be - Annual Wellness Visit, GIC, New to Medicare and 
+ If Type is DM then Program - Type will be - Ashtma, CAD, Diabetes, Heart Failure, Hypertension.
+• GIC - HEDIS Measure : Dropdown menu to choose a specific healthcare sub measure only for GIC. For example:
+ Controlling High Blood Pressure (CBP), Colorectal Cancer Screening (COL-E)., Breast  Cancer Screening (BCS-E), Eye Exam for Patients With Diabetes (EED).Kidney Health  Evaluation for Patients With Diabetes (KED)
+• Line of Business: Filter that allows users to view data by different insurance types.
+• Program Year Month: Enables users to choose a specific date range for their analysis..
+2. Outreach Performance Summary (Key Metrics)
+Focus is on members who are not in compliance but are included in the GIC Outeach Datamart . The current report is based on the September dataset from GIC.
+• Total Members Identified: The overall count of members eligible for outreach.
+• Total Members Outreached :The number of members who have been contacted as part of the outreach efforts.
+3. Post Outreach Outcomes and Member Activity
+•  Annual Wellness Visit (AWV) : Percentage of members who completed their Annual Wellness Visit.
+• Primary Care Visits : Count of members who completed their Primary Care Visit.
+4. Health Impact Summary (Leading & Lagging Indicators)
+• Pre & Post 6-Month AED Visits : Rate of avoidable emergency department visits per member before and after outreach.
+• Pre & Post 6-Month Readmit Visits : Readmit visit rate before and after outreach.
+• Pre & Post 6-Month IP Visits : Inpatient visit rate before and after outreach.
+5. Outreach Engagement Explorer:
+• Data Tree Diagram Representation : Visual representation starting with the total identified members and branching out as follows:
+• Outreached / Not Outreached: Indicates whether an attempt was made to connect with each member.
+• Engaged / Not Engaged :For members who were outreached, further categorizes into those who engaged (responded, scheduled appointments, or confirmed participation) versus those who did not.  
+• Reason : Provides specific reasons such as “No response,” “Refused,” or “Member not scheduled” for those who did not engage.
+-----------------------------------------------------------------------------------------------------------------------------------------------------------
+-----------------------------------------------------------------------------------------------------------------------------------------------------------
+Customer Count Dashboard:
