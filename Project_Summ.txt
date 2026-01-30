@@ -1,0 +1,30 @@
+
+Establishes a unified enterprise analytics foundation that advances population health, 
+clinical quality, health equity, care management, and outreach through standardized, 
+self-service insights for leadership and operations.
+
+These initiatives collectively establish a unified enterprise analytics ecosystem supporting 
+population health management, clinical quality, health equity, care management, and outreach, 
+while enabling leadership and operational teams with standardized, self-service insights for 
+performance monitoring and strategic decision-making.
+
+Provides an on-demand, comprehensive member-level view integrating claims, clinical, pharmacy, care management, SDOH, and predictive analytics data to support intervention population identification and feasibility assessment. (Member 360)
+
+Delivers high-level analytical assessment of populations by Line of Business, Group ID, and 
+PMG/Non-PMG, enabling segmentation, cost and utilization profiling, and opportunity identification. 
+(Population Assessment)
+
+Enables monitoring of priority quality and outcome measures across demographic and SDOH groups and 
+identifies disparities to guide targeted equity-focused interventions. 
+(PHP Health Equity Dashboard & PDS-PMG Health Equity Insights)
+
+Tracks centralized outreach and disease management efforts, including members identified, outreached, 
+and engaged, and monitors visit completion and pre/post utilization impact. (Outreach Dashboard)
+
+Measures clinical and utilization outcomes across chronic condition programs, 
+comparing engaged vs not engaged and before vs after disease management to assess program effectiveness. 
+(Healthy Solutions – Disease Management Outcomes)
+
+Provides detailed visibility into high-need Medicaid populations across 
+demographics, cost, utilization, providers, SDOH, and care management to 
+support prioritization and intervention planning. (PHP Medicaid CISC Population Dashboard)
