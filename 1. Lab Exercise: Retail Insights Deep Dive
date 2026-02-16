@@ -1,0 +1,38 @@
+Objective: Use Pandas and NumPy to clean, slice, and query retail data to find high-performing products.
+ 
+Data Structure:
+ 
+List Data Structures products = ['Widget A', 'Widget B', 'Gadget X', 'Gadget Y', 'Tool Z']
+units_sold = [12, 15, 7, 20, 10, 14, 18, 5, 22, 11, 13, 16, 8, 21, 9, 12, 15, 7, 20, 10, 14, 18, 5, 22, 11, 13, 16, 8, 21, 9]
+regions = ['North', 'South', 'East', 'West', 'North', 'South']
+sales = [120.5, 150.0, 70.2, 200.8, 100.0, 140.5, 180.0, 50.2, 220.8, 110.0, 130.5, 160.0, 80.2, 210.8, 90.0, 120.5, 150.0, 70.2, 200.8, 100.0, 140.5, 180.0, 50.2, 220.8, 110.0, 130.5, 160.0, 80.2, 210.8, 90.0] cogs = [80.0, 90.0, 40.0, 120.0, 60.0, 85.0, 95.0, 45.0, 130.0, 65.0, 82.0, 92.0, 42.0, 125.0, 62.0, 80.0, 90.0, 40.0, 120.0, 60.0, 85.0, 95.0, 45.0, 130.0, 65.0, 82.0, 92.0, 42.0, 125.0, 62.0]
+discounts = [5.0, 10.0, 2.0, 15.0, 0.0, 5.0, 10.0, 2.0, 15.0, 0.0, 5.0, 10.0, 2.0, 15.0, 0.0, 5.0, 10.0, 2.0, 15.0, 0.0, 5.0, 10.0, 2.0, 15.0, 0.0, 5.0, 10.0, 2.0, 15.0, 0.0]
+ 
+# Calculate profit dynamically: Sales - COGS - Discount profit = [round(s - c - d, 2) for s, c, d in zip(sales, cogs, discounts)]
+Merging using NumPy # Note: NumPy arrays usually prefer a single data type.
+We can use object type here to accommodate both strings and numbers. data_array = np.column_stack((products, units_sold, regions, sales, cogs, profit, discounts))
+ 
+Phase 1: Setup & Conversion
+Using the lists created in the previous exercise, your first task is to move from a NumPy array to a Pandas DataFrame.
+Import pandas as pd.
+Create the DataFrame: Convert your NumPy data_array into a DataFrame.
+Define Columns: Name the columns: ['Product', 'Units_Sold', 'Region', 'Sales', 'COGS', 'Profit', 'Discount'].
+Fix Data Types: Ensure Units_Sold, Sales, COGS, Profit, and Discount are numeric.
+ 
+Phase 2: Basic Exploration
+Before diving deep, you need to understand the "skeleton" of your data.
+Shape: Use .shape to confirm you still have 30 rows and 7 columns.
+Summary Stats: Use .describe() to find the Mean, Min, and Max for all numerical columns.
+Question: What is the average (mean) profit across all 30 samples?
+ 
+Phase 3: Slicing & Dicing (loc vs iloc)
+Participants often get confused between label-based and integer-based indexing. Practice both:
+Integer Slicing (iloc): Extract the first 10 rows and the first 3 columns.
+Label Slicing (loc): Extract rows 5 through 15, but only the Product and Profit columns.
+Specific Selection: Use loc to find the Sales and Region for the 25th sample in the list.
+ 
+Phase 4: Advanced Querying
+The .query() function allows you to write filters using a syntax similar to SQL.
+High Volume: Use .query() to find all rows where Units_Sold > 15.
+Loss Leaders: Use .query() to find any rows where Profit < 0.
+Complex Logic: Find all products in the "North" region that had a Discount greater than 0.
