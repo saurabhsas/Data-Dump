@@ -1,0 +1,50 @@
+Lab Exercise: Analyzing Flight Distributions
+ 
+Objective: Visualize the distribution of flight delays and scheduled times using histograms, KDEs, and statistical annotations.
+ 
+Prerequisites
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
+from scipy.stats import gaussian_kde
+ 
+Task 1: Basic Distribution with Histograms
+Goal: Understand the frequency of departure delays.
+Filter the Data: Create a subset of the data where DepDelay is between -20 and 100 minutes (to avoid extreme outliers).
+Plot: Create a histogram of DepDelay.
+Refine: Set the bins to 30 and add clear X and Y axis labels.
+ 
+Task 2: Smooth Curves with Gaussian KDE
+Goal: Compare the scheduled arrival times (CRSArrTim) against actual density.
+Standard KDE: Use sns.kdeplot() to visualize the "smooth" distribution of CRSArrTim.
+Manual KDE: Use scipy.stats.gaussian_kde to calculate the density for ArrDelay.
+Hint: Use np.linspace to create an x-axis range for the plot.
+Overlay: Plot the histogram and the KDE curve on the same graph to see how well the "smooth" line fits the "chunky" bars.
+ 
+Task 3: The "Density" Function (Probability Density)
+Goal: Normalize your data so the area under the curve equals 1.
+Plot the distribution of ArrDelay using plt.hist() but set the parameter density=True.
+Explain in a comment why the Y-axis scale changed from "Count" to a decimal value.
+ 
+Task 4: Statistical Annotation
+Goal: Make the chart "executive-ready" by highlighting key metrics.
+Calculate the Mean and Median of DepDelay.
+Use plt.axvline() to draw a solid red line for the mean and a dashed green line for the median.
+Annotate: Use the plt.annotate() function to label these lines.
+Example: Point an arrow to the mean value and label it "Average Delay".
+ 
+Task 5: The "Challenge" Analysis
+Scenario: A carrier claims their flights are more "predictable."
+Compare two carriers (e.g., 'DL' vs 'WN') by plotting their ArrDelay distributions on the same subplot.
+Use shade=True in the KDE plot to make the overlap visible.
+Which carrier has a "taller" peak (lower variance) around 0?
+ 
+Sample Code
+Annotation syntax, you can provide this template:
+ 
+# Sample Annotation Template
+plt.annotate('Significant Peak', 
+            xy=(mean_val, 0.02), 
+            xytext=(mean_val + 10, 0.03),
+            arrowprops=dict(facecolor='black', shrink=0.05))
