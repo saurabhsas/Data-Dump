@@ -1,0 +1,56 @@
+Lab: Predicting Flight Arrival Delays
+Objective
+ 
+In this lab, we will build a regression model to predict the arrival delay (ArrDelay) of a flight. You will perform data cleaning, feature engineering, and evaluate your model’s performance.
+ 
+Dataset: AI-Fundamentals-Updated/data/flights.zip at main · monika-4dec/AI-Fundamentals-Updated
+ 
+Prerequisites
+Python 3.x
+Libraries: pandas, scikit-learn, matplotlib, seaborn
+ 
+Step 1: Data Exploration & Preprocessing
+Before building a model, you need to understand the relationship between the variables.
+Handle Missing Values: Check if there are any null values in ArrDelay or DepDelay.
+Correlation Analysis: Visualize the relationship between departure delay and arrival delay.
+Tip: In aviation, DepDelay is usually the strongest predictor of ArrDelay.
+Data Cleaning: Remove columns that are redundant or "leaky" (information that wouldn't be known before a flight lands), such as ArrDel15 or Cancelled.
+ 
+Step 2: Feature Selection
+Choose your Features (X) and your Target (y).
+Target ($y$): ArrDelay
+Features ($X$): DepDelay, CRSDepTime, CRSArrTime, Month, DayOfWeek.
+ 
+Exercise: Convert categorical data like Carrier or OriginState into numerical values using One-Hot Encoding if you wish to include them in the model.
+ 
+Step 3: Train/Test Split
+Split your data to ensure your model generalizes well to unseen flights.
+Python
+from sklearn.model_selection import train_test_split
+ 
+X = df[['DepDelay', 'CRSDepTime', 'CRSArrTime']] # Example selection
+y = df['ArrDelay']
+ 
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+ 
+Step 4: Model Building
+Start with a Linear Regression model. This assumes a relationship in the form of:
+$$y = \beta_0 + \beta_1x_1 + \beta_2x_2 + ... + \beta_nx_n + \epsilon$$
+Tasks:
+Initialize the LinearRegression model from scikit-learn.
+Fit the model using the training data.
+Generate predictions on the test set.
+ 
+Step 5: Evaluation
+How "off" are your predictions? Use the following metrics to find out:
+ 
+Metric
+
+
+Mean Absolute Error (MAE)
+
+
+Mean Squared Error (MSE)
+
+
+R-Squared  
