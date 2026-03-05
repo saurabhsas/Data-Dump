@@ -1,0 +1,35 @@
+Capstone Project: Multi-Class Plant Disease Detection Using CNNs
+Participants will build and compare shallow and deep CNN models to classify plant leaf images into healthy or diseased categories, applying skills from neural network training. This project uses the publicly available New Plant Diseases Dataset on Kaggle, featuring ~87,000 RGB images across 38 classes.
+
+Project Objectives
+Develop end-to-end image classification pipelines demonstrating shallow neural networks, deep feedforward nets, and CNNs for feature extraction. Compare model performance on accuracy, precision, recall, and training time to evaluate depth's impact on real-world tasks like agricultural diagnostics.
+Key goals include data preprocessing, model architecture design without pre-trained weights (to focus on from-scratch learning), hyperparameter tuning, and visualization of results.
+
+Dataset
+Use the "New Plant Diseases Dataset" (New Plant Diseases Dataset)
+~87,000 256x256 RGB images of crop leaves (e.g., tomato, potato).
+38 classes: healthy leaves + specific diseases (e.g., Tomato - Bacterial spot).
+Split: 70% train, 20% validation, 10% test (or use provided folds).
+This dataset suits CNNs as it requires detecting subtle disease patterns like spots or blight.
+
+
+Tasks to Implement
+Follow these sequential steps, documenting decisions, code, and outputs in a Jupyter notebook or report. No full code provided—focus on implementation logic.
+
+Step1: Data Preparation: Load dataset, resize images to 128x128 or 224x224, normalize pixels to, apply augmentation (rotation, flip, zoom) via Keras ImageDataGenerator or TensorFlow tf.image.
+
+Step2: Exploratory Analysis: Visualize 10-20 samples per class, compute class distribution (address imbalance with class weights), plot sample feature maps post-conv layers.
+
+Step3: Model 1- Shallow NN: Flatten images into 1D vectors, build a 2-3 layer MLP (e.g., Dense(512, ReLU) → Dropout → Dense(38, Softmax)). Train with Adam optimizer.
+
+Step4: Model 2- Deep Feedforward NN: Stack 5-7 Dense layers (e.g., increasing then decreasing units: 1024 → 512 → ... → 38), add BatchNorm and Dropout (0.3-0.5).
+
+Step5: Model 3- Shallow CNN: 2-3 Conv2D layers (32-64 filters, 3x3 kernel, ReLU), MaxPool2D, followed by Flatten + Dense. E.g., Conv → Pool → Conv → Pool → FC.
+
+Step6: Model 4- Deep CNN: 5+ layers (e.g., Conv(32) → Conv(64) → Conv(128) → GlobalAvgPool → Dense), with strides, padding='same', and skip connections if advanced.
+
+Step7: Training & Evaluation: Train each for 20-50 epochs (early stopping on val_loss), use categorical crossentropy loss. Compute confusion matrix, F1-score per class, ROC curves.
+
+Step8: Comparison: Table of metrics (accuracy, etc.) across models; plot training curves; analyze why CNNs outperform shallow NNs (e.g., translation invariance).
+
+Step9: Bonus: Deployment (optional but recommended): Save best model, create a Streamlit/Flask demo for image upload and prediction
