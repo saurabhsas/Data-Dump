@@ -1,54 +1,38 @@
-import streamlit as st
+def fmt_currency(x):
+    return f"${x:,.0f}"
 
 
-def apply_filters(df):
+def fmt_number(x):
+    return f"{int(x):,}"
 
-    filtered = df.copy()
 
-    st.sidebar.header("🔍 Filters")
+def get_kpis(df):
 
-    # -----------------------------------
-    # Line of Business
-    # -----------------------------------
-    if "LINEOFBUSINESS" in df.columns:
-        lob = st.sidebar.multiselect(
-            "Line of Business",
-            sorted(df["LINEOFBUSINESS"].dropna().unique())
-        )
-        if lob:
-            filtered = filtered[filtered["LINEOFBUSINESS"].isin(lob)]
+    members = df["MEMBERID"].nunique()
 
-    # -----------------------------------
-    # County
-    # -----------------------------------
-    if "COUNTY" in df.columns:
-        county = st.sidebar.multiselect(
-            "County",
-            sorted(df["COUNTY"].dropna().unique())
-        )
-        if county:
-            filtered = filtered[filtered["COUNTY"].isin(county)]
+    total_cost = df["PAID"].sum()
 
-    # -----------------------------------
-    # Gender
-    # -----------------------------------
-    if "GENDER" in df.columns:
-        gender = st.sidebar.multiselect(
-            "Gender",
-            sorted(df["GENDER"].dropna().unique())
-        )
-        if gender:
-            filtered = filtered[filtered["GENDER"].isin(gender)]
+    return {
+        "Members": fmt_number(members),
 
-    # -----------------------------------
-    # Age Category
-    # -----------------------------------
-    if "AGE_CATEGORY" in df.columns:
-        age = st.sidebar.multiselect(
-            "Age Category",
-            sorted(df["AGE_CATEGORY"].dropna().unique())
-        )
-        if age:
-            filtered = filtered[filtered["AGE_CATEGORY"].isin(age)]
+        "Medical Cost": fmt_currency(df["MEDICAL_PAID"].sum()),
+        "Pharmacy Cost": fmt_currency(df["RX_PAID"].sum()),
+        "Total Cost": fmt_currency(total_cost),
+        "MR Allowed": fmt_currency(df["MR_ALLOWED"].sum()),
 
-    return filtered
+        # Counts
+        "Avoidable ED": fmt_number(df["AVOIDED"].sum()),
+        "Avoidable IP": fmt_number(df["AVOIDIP"].sum()),
+
+        "ED Visits": fmt_number(df["EDVISITS"].sum()),
+        "IP Visits": fmt_number(df["IPVISITS"].sum()),
+
+        # Cost buckets
+        "Professional": fmt_currency(df["PROF"].sum()),
+        "Outpatient": fmt_currency(df["FOP"].sum()),
+        "Inpatient": fmt_currency(df["FIP"].sum()),
+        "Others": fmt_currency(df["OTH"].sum()),
+
+        # Derived
+        "PMPM": fmt_currency(total_cost / members if members else 0)
+    }
