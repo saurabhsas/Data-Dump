@@ -20,6 +20,31 @@ from visualization.chart_router import build_chart
 st.set_page_config(layout="wide")
 st.title("🏥 Matched Cohort Analytics Dashboard")
 
+
+# -----------------------------------
+# 🔥 KPI FONT SIZE OVERRIDE (KEY CHANGE)
+# -----------------------------------
+st.markdown("""
+<style>
+/* KPI Value */
+div[data-testid="stMetricValue"] {
+    font-size: 30px !important;
+    font-weight: 700;
+}
+
+/* KPI Label */
+div[data-testid="stMetricLabel"] {
+    font-size: 14px !important;
+}
+
+/* KPI Delta */
+div[data-testid="stMetricDelta"] {
+    font-size: 13px !important;
+}
+</style>
+""", unsafe_allow_html=True)
+
+
 # -----------------------------------
 # CACHE MATCHING
 # -----------------------------------
@@ -94,7 +119,7 @@ def format_val(key, value):
 
 
 # -----------------------------------
-# KPI DISPLAY (STABLE VERSION)
+# KPI DISPLAY
 # -----------------------------------
 def render_kpis(title, kpis1, kpis2):
 
