@@ -1,147 +1,86 @@
 import pandas as pd
 
 
-def caliper_matching(group1_df, group2_df, caliper=0.01):
+def caliper_matching_sas(g1_df, g2_df, caliper=0.01):
 
-    g1 = group1_df.copy()
-    g2 = group2_df.copy()
+    # -----------------------------------
+    # 1️⃣ Create distinct datasets
+    # -----------------------------------
+    g1 = g1_df[["MEMBER_UCI", "MATCH_SCORE", "LOB"]].drop_duplicates().copy()
+    g2 = g2_df[["MEMBER_UCI", "MATCH_SCORE", "LOB"]].drop_duplicates().copy()
 
     # Ensure numeric
     g1["MATCH_SCORE"] = pd.to_numeric(g1["MATCH_SCORE"], errors="coerce")
     g2["MATCH_SCORE"] = pd.to_numeric(g2["MATCH_SCORE"], errors="coerce")
 
-    g1 = g1.dropna(subset=["MATCH_SCORE"]).reset_index(drop=True)
-    g2 = g2.dropna(subset=["MATCH_SCORE"]).reset_index(drop=True)
+    g1 = g1.dropna(subset=["MATCH_SCORE"])
+    g2 = g2.dropna(subset=["MATCH_SCORE"])
 
     # -----------------------------------
-    # 🔗 CREATE ALL POSSIBLE MATCHES
+    # 2️⃣ Create all valid pairs (CROSS JOIN)
     # -----------------------------------
     g1["key"] = 1
     g2["key"] = 1
 
     pairs = g1.merge(g2, on="key", suffixes=("_G1", "_G2")).drop("key", axis=1)
 
-    # Compute difference
+    # Apply SAS conditions
     pairs["diff"] = abs(pairs["MATCH_SCORE_G1"] - pairs["MATCH_SCORE_G2"])
 
-    # Apply caliper
-    pairs = pairs[pairs["diff"] <= caliper]
+    pairs = pairs[
+        (pairs["diff"] < caliper) &
+        (pairs["MEMBER_UCI_G1"] != pairs["MEMBER_UCI_G2"]) &
+        (pairs["LOB_G1"] == pairs["LOB_G2"])
+    ].copy()
 
     if pairs.empty:
-        print("No matches found within caliper")
+        print("No pairs found within caliper")
         return pd.DataFrame()
 
     # -----------------------------------
-    # 🎯 SORT BY BEST MATCHES
+    # 3️⃣ SORT (SAS equivalent)
     # -----------------------------------
-    pairs = pairs.sort_values("diff")
+    pairs = pairs.sort_values(["MEMBER_UCI_G2", "diff"]).reset_index(drop=True)
 
     # -----------------------------------
-    # 🚫 NO REPLACEMENT MATCHING
+    # 4️⃣ MATCH WITHOUT REUSE (HASH LOGIC)
     # -----------------------------------
-    used_g1 = set()
-    used_g2 = set()
+    used_g2 = set()  # treated
+    used_g1 = set()  # control
 
     final_matches = []
 
     for _, row in pairs.iterrows():
 
-        g1_id = row["MEMBER_UCI_G1"]
         g2_id = row["MEMBER_UCI_G2"]
+        g1_id = row["MEMBER_UCI_G1"]
 
-        if g1_id in used_g1 or g2_id in used_g2:
-            continue
+        lob_g2 = row["LOB_G2"]
+        lob_g1 = row["LOB_G1"]
 
-        final_matches.append({
-            "G1_MEMBER_UCI": g1_id,
-            "G1_SCORE": row["MATCH_SCORE_G1"],
-            "G2_MEMBER_UCI": g2_id,
-            "G2_SCORE": row["MATCH_SCORE_G2"],
-            "SCORE_DIFF": row["diff"]
-        })
+        # mimic SAS hash check (no reuse + LOB consistency)
+        if (g2_id, lob_g2) not in used_g2 and (g1_id, lob_g1) not in used_g1:
 
-        used_g1.add(g1_id)
-        used_g2.add(g2_id)
+            final_matches.append({
+                "G1_MEMBER_UCI": g1_id,
+                "G2_MEMBER_UCI": g2_id,
+                "G1_SCORE": row["MATCH_SCORE_G1"],
+                "G2_SCORE": row["MATCH_SCORE_G2"],
+                "SCORE_DIFF": row["diff"],
+                "LOB": lob_g1
+            })
+
+            used_g2.add((g2_id, lob_g2))
+            used_g1.add((g1_id, lob_g1))
 
     matched_df = pd.DataFrame(final_matches)
 
-    print(f"Total matches found: {len(matched_df)}")
+    # -----------------------------------
+    # 5️⃣ COUNT (SAS equivalent)
+    # -----------------------------------
+    print("\n📊 MATCH SUMMARY")
+    print("Unique G1:", matched_df["G1_MEMBER_UCI"].nunique())
+    print("Unique G2:", matched_df["G2_MEMBER_UCI"].nunique())
+    print("Total Matches:", len(matched_df))
 
     return matched_df
-
-/*----------------------------------------------------------------------------------*/
-/*Add a Caliper: restrict matches with diff 0.01, 0.001 & 0.0001*/
-/*----------------------------------------------------------------------------------*/
-/*153 rows and 3 columns*/
-Proc SQL;
-Create Table Group1_member_score as 
-Select Distinct MEMBER_UCI, match_score, LOB
-From Member_match_score_Group1;
-Quit;
-/*526 rows and 3 columns*/
-Proc SQL;
-Create Table Group2_member_score as 
-Select Distinct MEMBER_UCI, match_score, LOB
-From Member_match_score_Group2;
-Quit;
-
-/*94 rows and 7 columns*/
-Proc SQL;
-Create Table scored_paris_2 as
-Select a.MEMBER_UCI as Group1_MEMBERUCI,
-	   b.MEMBER_UCI as Group2_MEMBERUCI,
-	   a.match_score as Group1_match_score,
-	   b.match_score as Group2_match_score,
-	   abs(b.match_score - a.match_score) as diff,
-	   a.LOB as LOB_G1,
-	   b.LOB as LOB_G2
-From Group1_member_score as a, Group2_member_score as b
-where abs(a.match_score - b.match_score) < 0.01 /*Caliper*/
-		and abs(a.match_score - b.match_score) is not null
-		and Group1_MEMBERUCI ne Group2_MEMBERUCI
-		and a.lob = b.lob;
-Run;
-Proc Sort data=scored_paris_2;
-By Group2_MEMBERUCI diff;
-Run;
-
-/*66, 80*/
-Proc SQL;
-Select count(distinct Group1_MEMBERUCI) , count(distinct Group2_MEMBERUCI)
-From scored_paris_2;
-Quit;
-
-
-/*Match Without Reuse of Base Group Memberuci : 1:1 matching only*/
-Data Match_Pairs;
-Declare hash used_treat();
-	rc1 = used_treat.definekey('Group2_MEMBERUCI');
-	rc1 = used_treat.definekey('LOB_G2');
-	rc1 = used_treat.defineDone();
-Declare hash used_ctrl();
-	rc2 = used_ctrl.definekey('Group1_MEMBERUCI');
-	rc1 = used_ctrl.definekey('LOB_G1');
-	rc2 = used_ctrl.defineDone();
-
-	Do Until (done);
-		set scored_paris_2 end=done;
-		if used_treat.check() ne 0 and used_ctrl.check() ne 0 then do;
-			output;
-			rc1 = used_treat.add();
-			rc2 = used_ctrl.add();
-		end;
-	end;
-Drop rc1 rc2;
-Run;
-
-Proc SQL;
-Select LOB_G1,count(distinct Group1_MEMBERUCI) , count(distinct Group2_MEMBERUCI)
-From Match_Pairs
-gROUP BY LOB_G1;
-Quit;
-Proc SQL;
-Select count(distinct Group1_MEMBERUCI) , count(distinct Group2_MEMBERUCI)
-From Match_Pairs;
-Quit;
-
-
