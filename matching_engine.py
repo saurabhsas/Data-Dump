@@ -1,144 +1,111 @@
-import streamlit as st
 import pandas as pd
-
-# Core modules
-from core.data_loader import load_data
-from core.filters import apply_filters
-from core.query_router import run_prompt
-from core.metrics import get_kpis
-from core.insights_engine import generate_insights
-
-from core.group_match_loader import load_group_match_data
-from core.matching_engine import caliper_matching_sas
-from core.matched_data_loader import load_matched_datasets
-from core.pre_post_analysis import build_pre_post_dataset
-from core.statistical_tests import run_multiple_tests
-
-from visualization.chart_router import build_chart
+import numpy as np
+from scipy.stats import ttest_ind
 
 
-# -----------------------------------
-# PAGE CONFIG
-# -----------------------------------
-st.set_page_config(layout="wide")
-st.title("🏥 Matched Cohort Analytics Dashboard")
+# ---------------------------------------
+# 🧠 Helper: Cohen's d (Effect Size)
+# ---------------------------------------
+def cohens_d(x, y):
+
+    nx = len(x)
+    ny = len(y)
+
+    if nx < 2 or ny < 2:
+        return np.nan
+
+    mean_x = np.mean(x)
+    mean_y = np.mean(y)
+
+    var_x = np.var(x, ddof=1)
+    var_y = np.var(y, ddof=1)
+
+    pooled_std = np.sqrt(((nx - 1) * var_x + (ny - 1) * var_y) / (nx + ny - 2))
+
+    if pooled_std == 0:
+        return 0
+
+    return (mean_x - mean_y) / pooled_std
 
 
-# -----------------------------------
-# LOAD DATA
-# -----------------------------------
-df = load_data()
+# ---------------------------------------
+# 🧠 Single Metric t-test
+# ---------------------------------------
+def run_ttest(g1_df, g2_df, column):
 
-g1, g2 = load_group_match_data()
-matched = caliper_matching_sas(g1, g2, caliper=0.01)
+    if column not in g1_df.columns or column not in g2_df.columns:
+        return None
 
-g1_data, g2_data = load_matched_datasets(df, matched)
+    g1 = pd.to_numeric(g1_df[column], errors="coerce").dropna()
+    g2 = pd.to_numeric(g2_df[column], errors="coerce").dropna()
 
-combined = pd.concat([g1_data, g2_data])
+    if len(g1) < 2 or len(g2) < 2:
+        return {
+            "metric": column,
+            "g1_mean": None,
+            "g2_mean": None,
+            "p_value": None,
+            "significant": False,
+            "effect_size": None,
+            "note": "Insufficient data"
+        }
 
+    # Welch’s t-test (unequal variance)
+    stat, pval = ttest_ind(g1, g2, equal_var=False)
 
-# -----------------------------------
-# FILTERS
-# -----------------------------------
-filtered = apply_filters(combined)
+    effect = cohens_d(g1, g2)
 
-
-# -----------------------------------
-# KPI SECTION
-# -----------------------------------
-st.subheader("📊 Key Metrics")
-
-col1, col2 = st.columns(2)
-
-kpi_g1 = get_kpis(filtered[filtered["GROUP"] == "Group1"])
-kpi_g2 = get_kpis(filtered[filtered["GROUP"] == "Group2"])
-
-with col1:
-    st.markdown("### Group1")
-    for k, v in kpi_g1.items():
-        st.metric(k, v)
-
-with col2:
-    st.markdown("### Group2")
-    for k, v in kpi_g2.items():
-        st.metric(k, v)
+    return {
+        "metric": column,
+        "g1_mean": float(np.mean(g1)),
+        "g2_mean": float(np.mean(g2)),
+        "p_value": float(pval),
+        "significant": bool(pval < 0.05),
+        "effect_size": float(effect),
+        "note": ""
+    }
 
 
-# -----------------------------------
-# PROMPTS
-# -----------------------------------
-st.subheader("📊 Analysis")
+# ---------------------------------------
+# 🧠 Multiple Tests (Main Entry)
+# ---------------------------------------
+def run_multiple_tests(g1_df, g2_df):
 
-prompts = [
-    "Monthly Total Cost Trend",
-    "Total Cost by Line of Business",
-    "Total Cost by County",
-    "Total Cost by Age Category",
-    "Total Cost by Gender",
-    "ED vs IP Utilization Trend",
-    "Cost by Product",
-    "Cost by Product Type",
-    "Product-wise Utilization",
-    "County-wise PMPM",
-    "Pareto Cost Analysis (Top 5%)"
-]
+    metrics = [
+        "PAID",
+        "MEDICAL_PAID",
+        "RX_PAID",
+        "EDVISITS",
+        "IPVISITS"
+    ]
 
-selected_prompt = st.selectbox("Select Analysis", prompts)
+    results = []
 
+    for col in metrics:
+        res = run_ttest(g1_df, g2_df, col)
+        if res:
+            results.append(res)
 
-# -----------------------------------
-# QUERY + CHART
-# -----------------------------------
-result = run_prompt(selected_prompt, filtered)
-
-fig = build_chart(result, selected_prompt)
-st.plotly_chart(fig, use_container_width=True)
+    return results
 
 
-# -----------------------------------
-# INSIGHTS
-# -----------------------------------
-st.subheader("🧠 Insights")
+# ---------------------------------------
+# 🧠 Optional: Convert to DataFrame
+# ---------------------------------------
+def results_to_dataframe(results):
 
-insights = generate_insights(selected_prompt, result)
+    if not results:
+        return pd.DataFrame()
 
-for i in insights:
-    st.write("- " + i)
+    df = pd.DataFrame(results)
 
-
-# -----------------------------------
-# PRE vs POST MATCHING
-# -----------------------------------
-st.subheader("📊 Pre vs Post Matching")
-
-pre_post = build_pre_post_dataset(df, matched)
-
-pre_post_summary = (
-    pre_post.groupby("COHORT")["PAID"]
-    .mean()
-    .reset_index()
-)
-
-st.dataframe(pre_post_summary)
-
-
-# -----------------------------------
-# STATISTICAL TESTS
-# -----------------------------------
-st.subheader("📊 Statistical Significance (t-test)")
-
-test_results = run_multiple_tests(g1_data, g2_data)
-
-for res in test_results:
-    st.write(
-        f"{res['metric']} → p-value: {res['p_value']:.4f} "
-        f"{'✅ Significant' if res['significant'] else '❌ Not Significant'}"
+    # Formatting
+    df["p_value"] = df["p_value"].apply(
+        lambda x: round(x, 4) if x is not None else None
     )
 
+    df["effect_size"] = df["effect_size"].apply(
+        lambda x: round(x, 3) if x is not None else None
+    )
 
-# -----------------------------------
-# DATA VIEW
-# -----------------------------------
-st.subheader("📄 Data Sample")
-
-st.dataframe(result.head(50))
+    return df
