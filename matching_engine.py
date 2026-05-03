@@ -1,126 +1,164 @@
-def generate_insights(prompt, df):
+import streamlit as st
+import pandas as pd
 
-    if df is None or df.empty:
-        return ["No insights available"]
+from core.data_loader import load_data
+from core.filters import apply_filters
+from core.query_router import run_prompt
+from core.insights_engine import generate_insights
 
-    insights = []
+from core.group_match_loader import load_group_match_data
+from core.matching_engine import caliper_matching_sas
+from core.matched_data_loader import load_matched_datasets
 
-    # -----------------------------------
-    # Monthly Trend
-    # -----------------------------------
-    if prompt == "Monthly Total Cost Trend":
+from visualization.chart_router import build_chart
 
-        df = df.sort_values("MONTH")
 
-        latest = df.groupby("GROUP").tail(1)
-        first = df.groupby("GROUP").head(1)
+# -----------------------------------
+# CONFIG
+# -----------------------------------
+st.set_page_config(layout="wide")
+st.title("🏥 Matched Cohort Analytics Dashboard")
 
-        for g in df["GROUP"].unique():
-            latest_val = latest[latest["GROUP"] == g]["Value"].values[0]
-            first_val = first[first["GROUP"] == g]["Value"].values[0]
 
-            change = ((latest_val - first_val) / first_val * 100) if first_val != 0 else 0
+# -----------------------------------
+# LOAD + CACHE MATCHING
+# -----------------------------------
+@st.cache_data(show_spinner=False)
+def get_matched():
+    g1, g2 = load_group_match_data()
+    return caliper_matching_sas(g1, g2, caliper=0.01)
 
-            insights.append(
-                f"{g} total cost changed by {change:.1f}% over the period "
-                f"(${first_val:,.0f} → ${latest_val:,.0f})."
-            )
 
-        # volatility
-        vol = df.groupby("GROUP")["Value"].std()
-        for g in vol.index:
-            insights.append(
-                f"{g} shows volatility of ${vol[g]:,.0f} indicating variability in monthly spend."
-            )
+df = load_data()
+matched = get_matched()
 
-    # -----------------------------------
-    # LOB
-    # -----------------------------------
-    elif prompt == "Total Cost by Line of Business":
+g1, g2 = load_group_match_data()
+g1_data, g2_data = load_matched_datasets(df, matched)
 
-        top = df.sort_values("Value", ascending=False).iloc[0]
+combined = pd.concat([g1_data, g2_data])
 
-        insights.append(
-            f"Highest cost Line of Business is {top['Dimension']} "
-            f"with ${top['Value']:,.0f}."
+
+# -----------------------------------
+# FILTERS
+# -----------------------------------
+filtered = apply_filters(combined)
+
+
+# -----------------------------------
+# KPI CALCULATION
+# -----------------------------------
+def compute_kpis(df):
+
+    members = df["MEMBERID"].nunique()
+    total = df["PAID"].sum()
+
+    return {
+        "Members": members,
+        "Total Cost": total,
+        "Medical Cost": df["MEDICAL_PAID"].sum(),
+        "Pharmacy Cost": df["RX_PAID"].sum(),
+        "ED Visits": df["EDVISITS"].sum(),
+        "IP Visits": df["IPVISITS"].sum(),
+        "PMPM": total / members if members else 0
+    }
+
+
+k1 = compute_kpis(filtered[filtered["GROUP"] == "Group1"])
+k2 = compute_kpis(filtered[filtered["GROUP"] == "Group2"])
+
+
+# -----------------------------------
+# KPI UI (LARGER + CLEAN)
+# -----------------------------------
+def format_val(k, v):
+    if "Cost" in k or k == "PMPM":
+        return f"${v:,.0f}"
+    return f"{int(v):,}"
+
+
+def render_kpis(title, kpis1, kpis2):
+
+    st.markdown(f"### {title}")
+
+    cols = st.columns(4)
+
+    for i, key in enumerate(kpis1.keys()):
+
+        v1 = kpis1[key]
+        v2 = kpis2[key]
+
+        pct = ((v1 - v2) / v2 * 100) if v2 != 0 else 0
+
+        cols[i % 4].markdown(
+            f"""
+            <div style="
+                background:#f0f4f8;
+                padding:14px;
+                border-radius:12px;
+                text-align:center;
+            ">
+                <div style="font-size:13px; font-weight:600;">{key}</div>
+                <div style="font-size:22px; font-weight:bold;">
+                    {format_val(key, v1)}
+                </div>
+                <div style="font-size:12px; color:#555;">
+                    {pct:+.1f}% vs G2
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True
         )
 
-        share = df.groupby("GROUP")["Value"].sum()
-        for g in share.index:
-            insights.append(f"{g} total cost across LOBs: ${share[g]:,.0f}")
 
-    # -----------------------------------
-    # County
-    # -----------------------------------
-    elif prompt == "Total Cost by County":
+st.subheader("📊 Key Metrics")
 
-        top = df.sort_values("Value", ascending=False).iloc[0]
+col1, col2 = st.columns(2)
 
-        insights.append(
-            f"{top['Dimension']} is the highest cost county at ${top['Value']:,.0f}."
-        )
+with col1:
+    render_kpis("Group1", k1, k2)
 
-        insights.append("Geographic variation suggests concentration of healthcare utilization.")
+with col2:
+    render_kpis("Group2", k2, k1)
 
-    # -----------------------------------
-    # Age
-    # -----------------------------------
-    elif prompt == "Total Cost by Age Category":
 
-        top = df.sort_values("Value", ascending=False).iloc[0]
+# -----------------------------------
+# PROMPTS
+# -----------------------------------
+prompts = [
+    "Monthly Total Cost Trend",
+    "Total Cost by Line of Business",
+    "Total Cost by County",
+    "Total Cost by Age Category",
+    "Total Cost by Gender",
+    "ED vs IP Utilization Trend",
+    "Pareto Cost Analysis (Top 5%)"
+]
 
-        insights.append(
-            f"Highest cost age segment: {top['Dimension']} "
-            f"(${top['Value']:,.0f})."
-        )
+selected_prompt = st.selectbox("Select Analysis", prompts)
 
-        insights.append("Older age groups typically drive higher utilization and costs.")
 
-    # -----------------------------------
-    # Gender
-    # -----------------------------------
-    elif prompt == "Total Cost by Gender":
+# -----------------------------------
+# QUERY + CHART
+# -----------------------------------
+result = run_prompt(selected_prompt, filtered)
 
-        totals = df.groupby("Dimension")["Value"].sum()
+fig = build_chart(result, selected_prompt)
+st.plotly_chart(fig, use_container_width=True)
 
-        for g in totals.index:
-            insights.append(f"{g} total cost: ${totals[g]:,.0f}")
 
-        insights.append("Differences may reflect utilization patterns or population mix.")
+# -----------------------------------
+# INSIGHTS
+# -----------------------------------
+st.subheader("🧠 Insights")
 
-    # -----------------------------------
-    # Utilization
-    # -----------------------------------
-    elif prompt == "ED vs IP Utilization Trend":
+insights = generate_insights(selected_prompt, result)
 
-        totals = df.groupby("GROUP")[["EDVISITS", "IPVISITS"]].sum()
+for ins in insights:
+    st.write("•", ins)
 
-        for g in totals.index:
-            ed = totals.loc[g, "EDVISITS"]
-            ip = totals.loc[g, "IPVISITS"]
 
-            insights.append(
-                f"{g}: ED visits = {int(ed):,}, IP visits = {int(ip):,}."
-            )
-
-        insights.append("Higher ED usage may indicate gaps in primary care access.")
-
-    # -----------------------------------
-    # Pareto
-    # -----------------------------------
-    elif prompt == "Pareto Cost Analysis (Top 5%)":
-
-        total = df["Value"].sum()
-        insights.append(
-            f"Top 5% members contribute ${total:,.0f}, indicating strong cost concentration."
-        )
-
-        insights.append("This aligns with typical healthcare Pareto distribution (few drive majority cost).")
-
-    # -----------------------------------
-    # Default
-    # -----------------------------------
-    else:
-        insights.append("Compare cost and utilization patterns across Group1 and Group2.")
-
-    return insights
+# -----------------------------------
+# DATA VIEW
+# -----------------------------------
+st.subheader("📄 Data Sample")
+st.dataframe(result.head(50))
