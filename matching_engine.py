@@ -15,21 +15,17 @@ from visualization.chart_router import build_chart
 
 
 # -----------------------------------
-# PAGE CONFIG + GLOBAL STYLE
+# PAGE CONFIG + STYLE
 # -----------------------------------
 st.set_page_config(layout="wide")
 st.title("🏥 Matched Cohort Analytics Dashboard")
 
 st.markdown("""
 <style>
-body {
-    background-color: #f7f9fc;
-}
-section[data-testid="stSidebar"] {
-    background-color: #ffffff;
-}
-h1, h2, h3 {
-    color: #2c3e50;
+body { background-color: #f7f9fc; }
+.kpi-card:hover {
+    transform: translateY(-3px);
+    box-shadow: 0px 6px 18px rgba(0,0,0,0.12);
 }
 </style>
 """, unsafe_allow_html=True)
@@ -63,7 +59,7 @@ filtered = apply_filters(combined)
 
 
 # -----------------------------------
-# KPI CALCULATION
+# KPI CALCULATION (IMPORTANT: NUMERIC ONLY)
 # -----------------------------------
 def compute_kpis(df):
 
@@ -100,7 +96,7 @@ ICON_MAP = {
 
 
 # -----------------------------------
-# KPI FORMAT
+# FORMAT VALUES (DISPLAY ONLY)
 # -----------------------------------
 def format_val(k, v):
     if "Cost" in k or k == "PMPM":
@@ -109,7 +105,7 @@ def format_val(k, v):
 
 
 # -----------------------------------
-# KPI UI (ENHANCED)
+# KPI CARD RENDER
 # -----------------------------------
 def render_kpis(title, kpis1, kpis2):
 
@@ -119,13 +115,14 @@ def render_kpis(title, kpis1, kpis2):
 
     for i, key in enumerate(kpis1.keys()):
 
-        v1 = kpis1[key]
-        v2 = kpis2[key]
+        v1 = float(kpis1[key])
+        v2 = float(kpis2[key])
 
+        # Safe % diff
         pct = ((v1 - v2) / v2 * 100) if v2 != 0 else 0
 
         # Color logic
-        if "Cost" in key or "PMPM" in key:
+        if "Cost" in key or key == "PMPM":
             color = "#e74c3c" if pct > 0 else "#2ecc71"
         else:
             color = "#2ecc71" if pct > 0 else "#e74c3c"
@@ -134,35 +131,36 @@ def render_kpis(title, kpis1, kpis2):
 
         cols[i % 4].markdown(
             f"""
-            <div style="
+            <div class="kpi-card" style="
                 background: white;
                 padding: 16px;
                 border-radius: 14px;
                 box-shadow: 0px 2px 10px rgba(0,0,0,0.08);
                 text-align: center;
             ">
-                <div style="font-size:22px;">{icon}</div>
+                <div style="font-size:26px;">{icon}</div>
 
                 <div style="
-                    font-size:13px;
+                    font-size:14px;
                     font-weight:600;
                     color:#555;
-                    margin-top:4px;
+                    margin-top:6px;
                 ">
                     {key}
                 </div>
 
                 <div style="
-                    font-size:24px;
+                    font-size:26px;
                     font-weight:bold;
                     margin-top:6px;
+                    color:#2c3e50;
                 ">
                     {format_val(key, v1)}
                 </div>
 
                 <div style="
-                    font-size:12px;
-                    margin-top:4px;
+                    font-size:13px;
+                    margin-top:6px;
                     color:{color};
                     font-weight:600;
                 ">
