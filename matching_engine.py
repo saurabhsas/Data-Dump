@@ -1,208 +1,238 @@
-# core/query_router.py
-
+import streamlit as st
 import pandas as pd
 
+# Core modules
+from core.data_loader import load_data
+from core.filters import apply_filters
+from core.query_router import run_prompt
+from core.insights_engine import generate_insights
 
-# ---------------------------------------
-# Helper: Month preparation
-# ---------------------------------------
-def prepare_month(df):
-    if "ELIGIBILITYYEARANDMONTH" in df.columns:
-        df["MONTH"] = df["ELIGIBILITYYEARANDMONTH"].astype(int)
-    return df
+from core.group_match_loader import load_group_match_data
+from core.matching_engine import caliper_matching_sas
+from core.matched_data_loader import load_matched_datasets
+
+from visualization.chart_router import build_chart
 
 
-# ---------------------------------------
-# Main router
-# ---------------------------------------
-def run_prompt(prompt, df):
+# -----------------------------------
+# PAGE CONFIG
+# -----------------------------------
+st.set_page_config(layout="wide")
+st.title("🏥 Matched Cohort Analytics Dashboard")
 
-    df = prepare_month(df)
 
-    # ---------------------------------------
-    # GROUP MODE
-    # ---------------------------------------
-    if "GROUP" in df.columns:
+# -----------------------------------
+# GLOBAL STYLE (IMPORTANT)
+# -----------------------------------
+st.markdown("""
+<style>
+body { background-color: #f7f9fc; }
 
-        # -----------------------------------
-        # Monthly Total Cost Trend
-        # -----------------------------------
-        if prompt == "Monthly Total Cost Trend":
-            return (
-                df.groupby(["MONTH", "GROUP"])["PAID"]
-                .sum()
-                .reset_index()
-                .rename(columns={"PAID": "Value"})
-                .sort_values("MONTH")
-            )
+.kpi-card {
+    background: white;
+    padding: 16px;
+    border-radius: 14px;
+    box-shadow: 0px 2px 10px rgba(0,0,0,0.08);
+    text-align: center;
+    transition: all 0.2s ease-in-out;
+}
 
-        # -----------------------------------
-        # Cost by Line of Business
-        # -----------------------------------
-        if prompt == "Total Cost by Line of Business":
-            return (
-                df.groupby(["LINEOFBUSINESS", "GROUP"])["PAID"]
-                .sum()
-                .reset_index()
-                .rename(columns={
-                    "LINEOFBUSINESS": "Dimension",
-                    "PAID": "Value"
-                })
-                .sort_values("Value", ascending=False)
-            )
+.kpi-card:hover {
+    transform: translateY(-3px);
+    box-shadow: 0px 6px 18px rgba(0,0,0,0.12);
+}
+</style>
+""", unsafe_allow_html=True)
 
-        # -----------------------------------
-        # Cost by County
-        # -----------------------------------
-        if prompt == "Total Cost by County":
-            return (
-                df.groupby(["COUNTY", "GROUP"])["PAID"]
-                .sum()
-                .reset_index()
-                .rename(columns={
-                    "COUNTY": "Dimension",
-                    "PAID": "Value"
-                })
-            )
 
-        # -----------------------------------
-        # Cost by Age
-        # -----------------------------------
-        if prompt == "Total Cost by Age Category":
-            return (
-                df.groupby(["AGE_CATEGORY", "GROUP"])["PAID"]
-                .sum()
-                .reset_index()
-                .rename(columns={
-                    "AGE_CATEGORY": "Dimension",
-                    "PAID": "Value"
-                })
-            )
+# -----------------------------------
+# CACHE MATCHING
+# -----------------------------------
+@st.cache_data(show_spinner=False)
+def get_matched():
+    g1, g2 = load_group_match_data()
+    return caliper_matching_sas(g1, g2, caliper=0.01)
 
-        # -----------------------------------
-        # Cost by Gender
-        # -----------------------------------
-        if prompt == "Total Cost by Gender":
-            return (
-                df.groupby(["GENDER", "GROUP"])["PAID"]
-                .sum()
-                .reset_index()
-                .rename(columns={
-                    "GENDER": "Dimension",
-                    "PAID": "Value"
-                })
-            )
 
-        # -----------------------------------
-        # ED vs IP Utilization Trend
-        # -----------------------------------
-        if prompt == "ED vs IP Utilization Trend":
-            return (
-                df.groupby(["MONTH", "GROUP"])[["EDVISITS", "IPVISITS"]]
-                .sum()
-                .reset_index()
-                .sort_values("MONTH")
-            )
+# -----------------------------------
+# LOAD DATA
+# -----------------------------------
+df = load_data()
+matched = get_matched()
 
-        # -----------------------------------
-        # Cost by Product
-        # -----------------------------------
-        if prompt == "Cost by Product":
-            return (
-                df.groupby(["FSPRODUCT", "GROUP"])["PAID"]
-                .sum()
-                .reset_index()
-                .rename(columns={
-                    "FSPRODUCT": "Dimension",
-                    "PAID": "Value"
-                })
-            )
+g1, g2 = load_group_match_data()
+g1_data, g2_data = load_matched_datasets(df, matched)
 
-        # -----------------------------------
-        # Cost by Product Type
-        # -----------------------------------
-        if prompt == "Cost by Product Type":
-            return (
-                df.groupby(["PRODUCTTYPEDESCR", "GROUP"])["PAID"]
-                .sum()
-                .reset_index()
-                .rename(columns={
-                    "PRODUCTTYPEDESCR": "Dimension",
-                    "PAID": "Value"
-                })
-            )
+combined = pd.concat([g1_data, g2_data])
 
-        # -----------------------------------
-        # Product-wise Utilization
-        # -----------------------------------
-        if prompt == "Product-wise Utilization":
-            return (
-                df.groupby(["FSPRODUCT", "GROUP"])["EDVISITS"]
-                .sum()
-                .reset_index()
-                .rename(columns={
-                    "FSPRODUCT": "Dimension",
-                    "EDVISITS": "Value"
-                })
-            )
 
-        # -----------------------------------
-        # County-wise PMPM
-        # -----------------------------------
-        if prompt == "County-wise PMPM":
-            res = (
-                df.groupby(["COUNTY", "GROUP"])
-                .agg({
-                    "PAID": "sum",
-                    "MEMBERID": "nunique"
-                })
-                .reset_index()
-            )
-            res["Value"] = res["PAID"] / res["MEMBERID"]
-            return res.rename(columns={"COUNTY": "Dimension"})
+# -----------------------------------
+# FILTERS
+# -----------------------------------
+filtered = apply_filters(combined)
 
-        # -----------------------------------
-        # Pareto Top 5%
-        # -----------------------------------
-        if prompt == "Pareto Cost Analysis (Top 5%)":
 
-            agg = (
-                df.groupby(["MEMBERID", "GROUP"])["PAID"]
-                .sum()
-                .reset_index()
-            )
+# -----------------------------------
+# KPI CALCULATION (NUMERIC ONLY)
+# -----------------------------------
+def compute_kpis(df):
 
-            agg = agg.sort_values("PAID", ascending=False)
+    members = df["MEMBERID"].nunique()
+    total = df["PAID"].sum()
 
-            cutoff = max(1, int(len(agg) * 0.05))
+    return {
+        "Members": members,
+        "Total Cost": total,
+        "Medical Cost": df["MEDICAL_PAID"].sum(),
+        "Pharmacy Cost": df["RX_PAID"].sum(),
+        "ED Visits": df["EDVISITS"].sum(),
+        "IP Visits": df["IPVISITS"].sum(),
+        "PMPM": total / members if members else 0
+    }
 
-            return agg.head(cutoff).rename(columns={
-                "MEMBERID": "Dimension",
-                "PAID": "Value"
-            })
 
-    # ---------------------------------------
-    # SINGLE MODE (fallback)
-    # ---------------------------------------
+k1 = compute_kpis(filtered[filtered["GROUP"] == "Group1"])
+k2 = compute_kpis(filtered[filtered["GROUP"] == "Group2"])
 
-    if prompt == "Monthly Total Cost Trend":
-        return (
-            df.groupby("MONTH")["PAID"]
-            .sum()
-            .reset_index()
-            .rename(columns={"PAID": "Value"})
-        )
 
-    if prompt == "Total Cost by Line of Business":
-        return (
-            df.groupby("LINEOFBUSINESS")["PAID"]
-            .sum()
-            .reset_index()
-            .rename(columns={
-                "LINEOFBUSINESS": "Dimension",
-                "PAID": "Value"
-            })
-        )
+# -----------------------------------
+# KPI ICONS
+# -----------------------------------
+ICON_MAP = {
+    "Members": "👥",
+    "Total Cost": "💰",
+    "Medical Cost": "🏥",
+    "Pharmacy Cost": "💊",
+    "ED Visits": "🚑",
+    "IP Visits": "🛏️",
+    "PMPM": "📊"
+}
 
-    # Default fallback
-    return df
+
+# -----------------------------------
+# FORMAT FUNCTION
+# -----------------------------------
+def format_val(key, value):
+    if "Cost" in key or key == "PMPM":
+        return f"${value:,.0f}"
+    return f"{int(value):,}"
+
+
+# -----------------------------------
+# KPI CARD RENDER (FIXED)
+# -----------------------------------
+def render_kpis(title, kpis1, kpis2):
+
+    st.markdown(f"### {title}")
+
+    cols = st.columns(4)
+
+    for i, key in enumerate(kpis1.keys()):
+
+        v1 = float(kpis1[key])
+        v2 = float(kpis2[key])
+
+        pct = ((v1 - v2) / v2 * 100) if v2 != 0 else 0
+
+        # Color logic
+        if "Cost" in key or key == "PMPM":
+            color = "#e74c3c" if pct > 0 else "#2ecc71"
+        else:
+            color = "#2ecc71" if pct > 0 else "#e74c3c"
+
+        icon = ICON_MAP.get(key, "📊")
+
+        html = f"""
+        <div class="kpi-card">
+            <div style="font-size:26px;">{icon}</div>
+
+            <div style="
+                font-size:14px;
+                font-weight:600;
+                color:#555;
+                margin-top:6px;">
+                {key}
+            </div>
+
+            <div style="
+                font-size:26px;
+                font-weight:bold;
+                margin-top:6px;
+                color:#2c3e50;">
+                {format_val(key, v1)}
+            </div>
+
+            <div style="
+                font-size:13px;
+                margin-top:6px;
+                color:{color};
+                font-weight:600;">
+                {pct:+.1f}% vs G2
+            </div>
+        </div>
+        """
+
+        cols[i % 4].markdown(html, unsafe_allow_html=True)
+
+
+# -----------------------------------
+# KPI DISPLAY
+# -----------------------------------
+st.markdown("## 📊 Key Metrics Overview")
+
+col1, col2 = st.columns(2)
+
+with col1:
+    render_kpis("Group1", k1, k2)
+
+with col2:
+    render_kpis("Group2", k2, k1)
+
+
+# -----------------------------------
+# PROMPTS
+# -----------------------------------
+st.markdown("## 📈 Analysis")
+
+prompts = [
+    "Monthly Total Cost Trend",
+    "Total Cost by Line of Business",
+    "Total Cost by County",
+    "Total Cost by Age Category",
+    "Total Cost by Gender",
+    "ED vs IP Utilization Trend",
+    "Cost by Product",
+    "Cost by Product Type",
+    "Product-wise Utilization",
+    "County-wise PMPM",
+    "Pareto Cost Analysis (Top 5%)"
+]
+
+selected_prompt = st.selectbox("Select Analysis", prompts)
+
+
+# -----------------------------------
+# QUERY + CHART
+# -----------------------------------
+result = run_prompt(selected_prompt, filtered)
+
+fig = build_chart(result, selected_prompt)
+st.plotly_chart(fig, use_container_width=True)
+
+
+# -----------------------------------
+# INSIGHTS
+# -----------------------------------
+st.markdown("## 🧠 Insights")
+
+insights = generate_insights(selected_prompt, result)
+
+for ins in insights:
+    st.write("•", ins)
+
+
+# -----------------------------------
+# DATA VIEW
+# -----------------------------------
+st.markdown("## 📄 Data Sample")
+st.dataframe(result.head(50))
