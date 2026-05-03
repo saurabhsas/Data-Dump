@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 
+# Core modules
 from core.data_loader import load_data
 from core.filters import apply_filters
 from core.query_router import run_prompt
@@ -14,14 +15,28 @@ from visualization.chart_router import build_chart
 
 
 # -----------------------------------
-# CONFIG
+# PAGE CONFIG + GLOBAL STYLE
 # -----------------------------------
 st.set_page_config(layout="wide")
 st.title("🏥 Matched Cohort Analytics Dashboard")
 
+st.markdown("""
+<style>
+body {
+    background-color: #f7f9fc;
+}
+section[data-testid="stSidebar"] {
+    background-color: #ffffff;
+}
+h1, h2, h3 {
+    color: #2c3e50;
+}
+</style>
+""", unsafe_allow_html=True)
+
 
 # -----------------------------------
-# LOAD + CACHE MATCHING
+# CACHE MATCHING (IMPORTANT)
 # -----------------------------------
 @st.cache_data(show_spinner=False)
 def get_matched():
@@ -29,6 +44,9 @@ def get_matched():
     return caliper_matching_sas(g1, g2, caliper=0.01)
 
 
+# -----------------------------------
+# LOAD DATA
+# -----------------------------------
 df = load_data()
 matched = get_matched()
 
@@ -68,7 +86,21 @@ k2 = compute_kpis(filtered[filtered["GROUP"] == "Group2"])
 
 
 # -----------------------------------
-# KPI UI (LARGER + CLEAN)
+# KPI ICONS
+# -----------------------------------
+ICON_MAP = {
+    "Members": "👥",
+    "Total Cost": "💰",
+    "Medical Cost": "🏥",
+    "Pharmacy Cost": "💊",
+    "ED Visits": "🚑",
+    "IP Visits": "🛏️",
+    "PMPM": "📊"
+}
+
+
+# -----------------------------------
+# KPI FORMAT
 # -----------------------------------
 def format_val(k, v):
     if "Cost" in k or k == "PMPM":
@@ -76,6 +108,9 @@ def format_val(k, v):
     return f"{int(v):,}"
 
 
+# -----------------------------------
+# KPI UI (ENHANCED)
+# -----------------------------------
 def render_kpis(title, kpis1, kpis2):
 
     st.markdown(f"### {title}")
@@ -89,19 +124,48 @@ def render_kpis(title, kpis1, kpis2):
 
         pct = ((v1 - v2) / v2 * 100) if v2 != 0 else 0
 
+        # Color logic
+        if "Cost" in key or "PMPM" in key:
+            color = "#e74c3c" if pct > 0 else "#2ecc71"
+        else:
+            color = "#2ecc71" if pct > 0 else "#e74c3c"
+
+        icon = ICON_MAP.get(key, "📊")
+
         cols[i % 4].markdown(
             f"""
             <div style="
-                background:#f0f4f8;
-                padding:14px;
-                border-radius:12px;
-                text-align:center;
+                background: white;
+                padding: 16px;
+                border-radius: 14px;
+                box-shadow: 0px 2px 10px rgba(0,0,0,0.08);
+                text-align: center;
             ">
-                <div style="font-size:13px; font-weight:600;">{key}</div>
-                <div style="font-size:22px; font-weight:bold;">
+                <div style="font-size:22px;">{icon}</div>
+
+                <div style="
+                    font-size:13px;
+                    font-weight:600;
+                    color:#555;
+                    margin-top:4px;
+                ">
+                    {key}
+                </div>
+
+                <div style="
+                    font-size:24px;
+                    font-weight:bold;
+                    margin-top:6px;
+                ">
                     {format_val(key, v1)}
                 </div>
-                <div style="font-size:12px; color:#555;">
+
+                <div style="
+                    font-size:12px;
+                    margin-top:4px;
+                    color:{color};
+                    font-weight:600;
+                ">
                     {pct:+.1f}% vs G2
                 </div>
             </div>
@@ -110,7 +174,10 @@ def render_kpis(title, kpis1, kpis2):
         )
 
 
-st.subheader("📊 Key Metrics")
+# -----------------------------------
+# KPI DISPLAY
+# -----------------------------------
+st.markdown("## 📊 Key Metrics Overview")
 
 col1, col2 = st.columns(2)
 
@@ -124,6 +191,8 @@ with col2:
 # -----------------------------------
 # PROMPTS
 # -----------------------------------
+st.markdown("## 📈 Analysis")
+
 prompts = [
     "Monthly Total Cost Trend",
     "Total Cost by Line of Business",
@@ -131,6 +200,10 @@ prompts = [
     "Total Cost by Age Category",
     "Total Cost by Gender",
     "ED vs IP Utilization Trend",
+    "Cost by Product",
+    "Cost by Product Type",
+    "Product-wise Utilization",
+    "County-wise PMPM",
     "Pareto Cost Analysis (Top 5%)"
 ]
 
@@ -149,7 +222,7 @@ st.plotly_chart(fig, use_container_width=True)
 # -----------------------------------
 # INSIGHTS
 # -----------------------------------
-st.subheader("🧠 Insights")
+st.markdown("## 🧠 Insights")
 
 insights = generate_insights(selected_prompt, result)
 
@@ -160,5 +233,5 @@ for ins in insights:
 # -----------------------------------
 # DATA VIEW
 # -----------------------------------
-st.subheader("📄 Data Sample")
+st.markdown("## 📄 Data Sample")
 st.dataframe(result.head(50))
