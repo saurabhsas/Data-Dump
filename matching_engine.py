@@ -1,19 +1,32 @@
-import pandas as pd
 import streamlit as st
 
 
-@st.cache_data(show_spinner=False)
-def load_data(path="data/final_monthly.csv"):
-    df = pd.read_csv(path)
+def apply_filters(df):
 
-    # Standardize
-    df.columns = df.columns.str.upper()
+    filtered = df
 
-    # Important type fixes
-    if "MEMBERID" in df.columns:
-        df["MEMBERID"] = df["MEMBERID"].astype(str)
+    st.sidebar.header("🔍 Filters")
 
-    if "ELIGIBILITYYEARANDMONTH" in df.columns:
-        df["ELIGIBILITYYEARANDMONTH"] = df["ELIGIBILITYYEARANDMONTH"].astype(int)
+    def multi_filter(col, label):
+        nonlocal filtered
 
-    return df
+        if col not in df.columns:
+            return
+
+        options = sorted(df[col].dropna().unique())
+
+        selected = st.sidebar.multiselect(
+            label,
+            options,
+            default=[]
+        )
+
+        if selected:
+            filtered = filtered[filtered[col].isin(selected)]
+
+    multi_filter("LINEOFBUSINESS", "Line of Business")
+    multi_filter("COUNTY", "County")
+    multi_filter("GENDER", "Gender")
+    multi_filter("AGE_CATEGORY", "Age Category")
+
+    return filtered
