@@ -1,192 +1,128 @@
-import pandas as pd
+import plotly.express as px
 
 
-# ---------------------------------------
-# 🧠 Helper: Standardize MONTH
-# ---------------------------------------
-def prepare_month(df):
-    if "ELIGIBILITYYEARANDMONTH" in df.columns:
-        df["MONTH"] = df["ELIGIBILITYYEARANDMONTH"].astype(int)
-    return df
+def build_chart(df, prompt):
 
+    # -----------------------------------
+    # 🚫 Empty Data Safety
+    # -----------------------------------
+    if df is None or df.empty:
+        return px.bar(title="No Data Available")
 
-# ---------------------------------------
-# 🧠 Main Router
-# ---------------------------------------
-def run_prompt(prompt, df):
+    # -----------------------------------
+    # 📈 MONTHLY TREND (Single or Group)
+    # -----------------------------------
+    if "MONTH" in df.columns:
 
-    df = df.copy()
-    df = prepare_month(df)
+        # Case 1: Single metric (Value)
+        if "Value" in df.columns:
+            if "GROUP" in df.columns:
+                return px.line(
+                    df,
+                    x="MONTH",
+                    y="Value",
+                    color="GROUP",
+                    markers=True,
+                    title=prompt
+                )
+            else:
+                return px.line(
+                    df,
+                    x="MONTH",
+                    y="Value",
+                    markers=True,
+                    title=prompt
+                )
 
-    # ---------------------------------------
-    # 🟢 GROUP COMPARISON MODE
-    # ---------------------------------------
-    if "GROUP" in df.columns:
+        # Case 2: Multi-metric (ED/IP etc.)
+        y_cols = [c for c in df.columns if c not in ["MONTH", "GROUP"]]
 
-        # 📈 Monthly Total Cost Trend
-        if prompt == "Monthly Total Cost Trend":
-            res = (
-                df.groupby(["MONTH", "GROUP"])["PAID"]
-                .sum()
-                .reset_index()
-                .rename(columns={"PAID": "Value"})
-                .sort_values("MONTH")
+        if "GROUP" in df.columns:
+            # Melt for safe plotting
+            df_melt = df.melt(id_vars=["MONTH", "GROUP"], value_vars=y_cols)
+
+            return px.line(
+                df_melt,
+                x="MONTH",
+                y="value",
+                color="variable",
+                line_dash="GROUP",
+                markers=True,
+                title=prompt
             )
-            return res
+        else:
+            df_melt = df.melt(id_vars=["MONTH"], value_vars=y_cols)
 
-        # 📊 Cost by LOB
-        if prompt == "Total Cost by Line of Business":
-            return (
-                df.groupby(["LINEOFBUSINESS", "GROUP"])["PAID"]
-                .sum()
-                .reset_index()
-                .rename(columns={
-                    "LINEOFBUSINESS": "Dimension",
-                    "PAID": "Value"
-                })
-                .sort_values("Value", ascending=False)
-            )
-
-        # 📊 Cost by County
-        if prompt == "Total Cost by County":
-            return (
-                df.groupby(["COUNTY", "GROUP"])["PAID"]
-                .sum()
-                .reset_index()
-                .rename(columns={
-                    "COUNTY": "Dimension",
-                    "PAID": "Value"
-                })
-                .sort_values("Value", ascending=False)
-            )
-
-        # 📊 Cost by Age
-        if prompt == "Total Cost by Age Category":
-            return (
-                df.groupby(["AGE_CATEGORY", "GROUP"])["PAID"]
-                .sum()
-                .reset_index()
-                .rename(columns={
-                    "AGE_CATEGORY": "Dimension",
-                    "PAID": "Value"
-                })
+            return px.line(
+                df_melt,
+                x="MONTH",
+                y="value",
+                color="variable",
+                markers=True,
+                title=prompt
             )
 
-        # 📊 Cost by Gender
-        if prompt == "Total Cost by Gender":
-            return (
-                df.groupby(["GENDER", "GROUP"])["PAID"]
-                .sum()
-                .reset_index()
-                .rename(columns={
-                    "GENDER": "Dimension",
-                    "PAID": "Value"
-                })
+    # -----------------------------------
+    # 📊 BAR CHARTS (Dimension based)
+    # -----------------------------------
+    if "Dimension" in df.columns:
+
+        if "GROUP" in df.columns:
+            return px.bar(
+                df,
+                x="Dimension",
+                y="Value",
+                color="GROUP",
+                barmode="group",
+                title=prompt
+            )
+        else:
+            return px.bar(
+                df,
+                x="Dimension",
+                y="Value",
+                title=prompt
             )
 
-        # 📈 ED vs IP Utilization Trend
-        if prompt == "ED vs IP Utilization Trend":
-            res = (
-                df.groupby(["MONTH", "GROUP"])[["EDVISITS", "IPVISITS"]]
-                .sum()
-                .reset_index()
-                .sort_values("MONTH")
-            )
-            return res
+    # -----------------------------------
+    # 📊 UTILIZATION (ED vs IP)
+    # -----------------------------------
+    if set(["EDVISITS", "IPVISITS"]).issubset(df.columns):
 
-        # 📊 Product Cost
-        if prompt == "Cost by Product":
-            return (
-                df.groupby(["FSPRODUCT", "GROUP"])["PAID"]
-                .sum()
-                .reset_index()
-                .rename(columns={
-                    "FSPRODUCT": "Dimension",
-                    "PAID": "Value"
-                })
-            )
+        if "GROUP" in df.columns:
+            df_melt = df.melt(id_vars="GROUP")
 
-        # 📊 Product Type
-        if prompt == "Cost by Product Type":
-            return (
-                df.groupby(["PRODUCTTYPEDESCR", "GROUP"])["PAID"]
-                .sum()
-                .reset_index()
-                .rename(columns={
-                    "PRODUCTTYPEDESCR": "Dimension",
-                    "PAID": "Value"
-                })
+            return px.bar(
+                df_melt,
+                x="GROUP",
+                y="value",
+                color="variable",
+                barmode="group",
+                title=prompt
+            )
+        else:
+            df_melt = df.melt()
+
+            return px.bar(
+                df_melt,
+                x="variable",
+                y="value",
+                title=prompt
             )
 
-        # 📊 Utilization by Product
-        if prompt == "Product-wise Utilization":
-            return (
-                df.groupby(["FSPRODUCT", "GROUP"])["EDVISITS"]
-                .sum()
-                .reset_index()
-                .rename(columns={
-                    "FSPRODUCT": "Dimension",
-                    "EDVISITS": "Value"
-                })
-            )
+    # -----------------------------------
+    # 📊 PARETO / MEMBER BASED
+    # -----------------------------------
+    if "Value" in df.columns and "Dimension" in df.columns:
 
-        # 📊 County PMPM
-        if prompt == "County-wise PMPM":
-            res = (
-                df.groupby(["COUNTY", "GROUP"])
-                .agg({
-                    "PAID": "sum",
-                    "MEMBERID": "nunique"
-                })
-                .reset_index()
-            )
-            res["Value"] = res["PAID"] / res["MEMBERID"]
-            return res.rename(columns={"COUNTY": "Dimension"})
-
-        # 📊 Pareto Top 5%
-        if prompt == "Pareto Cost Analysis (Top 5%)":
-            df_agg = (
-                df.groupby(["MEMBERID", "GROUP"])["PAID"]
-                .sum()
-                .reset_index()
-            )
-
-            df_agg = df_agg.sort_values("PAID", ascending=False)
-
-            cutoff = int(len(df_agg) * 0.05)
-            df_top = df_agg.head(cutoff)
-
-            return df_top.rename(columns={
-                "MEMBERID": "Dimension",
-                "PAID": "Value"
-            })
-
-    # ---------------------------------------
-    # 🔵 SINGLE GROUP MODE (fallback)
-    # ---------------------------------------
-
-    # Monthly Trend
-    if prompt == "Monthly Total Cost Trend":
-        res = (
-            df.groupby("MONTH")["PAID"]
-            .sum()
-            .reset_index()
-            .rename(columns={"PAID": "Value"})
-            .sort_values("MONTH")
-        )
-        return res
-
-    # LOB
-    if prompt == "Total Cost by Line of Business":
-        return (
-            df.groupby("LINEOFBUSINESS")["PAID"]
-            .sum()
-            .reset_index()
-            .rename(columns={
-                "LINEOFBUSINESS": "Dimension",
-                "PAID": "Value"
-            })
+        return px.bar(
+            df,
+            x="Dimension",
+            y="Value",
+            title=prompt
         )
 
-    # Default
-    return df
+    # -----------------------------------
+    # 🔁 FALLBACK
+    # -----------------------------------
+    return px.bar(df, title="Fallback Chart")
