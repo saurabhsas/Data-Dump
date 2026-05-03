@@ -1,59 +1,167 @@
-def generate_insights(prompt, df):
+import streamlit as st
+import pandas as pd
 
-    if df is None or df.empty:
-        return ["No insights available"]
+from core.data_loader import load_data
+from core.filters import apply_filters
+from core.query_router import run_prompt
+from core.insights_engine import generate_insights
 
-    insights = []
+from core.group_match_loader import load_group_match_data
+from core.matching_engine import caliper_matching_sas
+from core.matched_data_loader import load_matched_datasets
 
-    # -----------------------------------
-    # Monthly Trend
-    # -----------------------------------
-    if prompt == "Monthly Total Cost Trend":
+from visualization.chart_router import build_chart
 
-        latest = df.sort_values("MONTH").groupby("GROUP").tail(1)
 
-        for _, row in latest.iterrows():
-            insights.append(
-                f"{row['GROUP']} latest month cost: ${row['Value']:,.0f}"
-            )
+# -----------------------------------
+# CONFIG
+# -----------------------------------
+st.set_page_config(layout="wide")
+st.title("🏥 Matched Cohort Analytics Dashboard")
 
-        trend = df.groupby("GROUP")["Value"].pct_change().mean()
 
-        for g, v in trend.items():
-            if v is not None:
-                insights.append(
-                    f"{g} average trend change: {v:.2%}"
-                )
+# -----------------------------------
+# LOAD + CACHE MATCHING
+# -----------------------------------
+@st.cache_data(show_spinner=False)
+def get_matched():
+    g1, g2 = load_group_match_data()
+    return caliper_matching_sas(g1, g2, caliper=0.01)
 
-    # -----------------------------------
-    # LOB
-    # -----------------------------------
-    elif prompt == "Total Cost by Line of Business":
 
-        top = df.sort_values("Value", ascending=False).head(1)
+df = load_data()
+matched = get_matched()
 
-        insights.append(
-            f"Top LOB: {top.iloc[0]['Dimension']} "
-            f"(${top.iloc[0]['Value']:,.0f})"
+g1, g2 = load_group_match_data()
+g1_data, g2_data = load_matched_datasets(df, matched)
+
+combined = pd.concat([g1_data, g2_data])
+
+
+# -----------------------------------
+# FILTERS
+# -----------------------------------
+filtered = apply_filters(combined)
+
+
+# -----------------------------------
+# KPI CALCULATION
+# -----------------------------------
+def compute_kpis(df):
+
+    members = df["MEMBERID"].nunique()
+    total = df["PAID"].sum()
+
+    return {
+        "Members": members,
+        "Total Cost": total,
+        "Medical Cost": df["MEDICAL_PAID"].sum(),
+        "Pharmacy Cost": df["RX_PAID"].sum(),
+        "ED Visits": df["EDVISITS"].sum(),
+        "IP Visits": df["IPVISITS"].sum(),
+        "PMPM": total / members if members else 0
+    }
+
+
+k1 = compute_kpis(filtered[filtered["GROUP"] == "Group1"])
+k2 = compute_kpis(filtered[filtered["GROUP"] == "Group2"])
+
+
+# -----------------------------------
+# KPI UI WITH % DIFFERENCE
+# -----------------------------------
+def format_val(k, v):
+    if "Cost" in k or k == "PMPM":
+        return f"${v:,.0f}"
+    return f"{int(v):,}"
+
+
+def render_kpis(title, kpis1, kpis2):
+
+    st.markdown(f"### {title}")
+
+    cols = st.columns(4)
+
+    for i, key in enumerate(kpis1.keys()):
+
+        v1 = kpis1[key]
+        v2 = kpis2[key]
+
+        # % difference
+        pct = ((v1 - v2) / v2 * 100) if v2 != 0 else 0
+
+        cols[i % 4].markdown(
+            f"""
+            <div style="
+                background:#f5f7fa;
+                padding:10px;
+                border-radius:10px;
+                text-align:center;
+            ">
+                <div style="font-size:11px;">{key}</div>
+                <div style="font-size:16px;"><b>{format_val(key, v1)}</b></div>
+                <div style="font-size:10px; color:gray;">
+                    {pct:+.1f}% vs G2
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True
         )
 
-    # -----------------------------------
-    # Utilization
-    # -----------------------------------
-    elif prompt == "ED vs IP Utilization Trend":
 
-        totals = df.groupby("GROUP")[["EDVISITS", "IPVISITS"]].sum()
+st.subheader("📊 Key Metrics")
 
-        for g in totals.index:
-            insights.append(
-                f"{g}: ED {int(totals.loc[g,'EDVISITS'])}, "
-                f"IP {int(totals.loc[g,'IPVISITS'])}"
-            )
+col1, col2 = st.columns(2)
 
-    # -----------------------------------
-    # Default
-    # -----------------------------------
-    else:
-        insights.append("Explore differences between Group1 and Group2.")
+with col1:
+    render_kpis("Group1", k1, k2)
 
-    return insights
+with col2:
+    render_kpis("Group2", k2, k1)
+
+
+# -----------------------------------
+# PROMPTS
+# -----------------------------------
+prompts = [
+    "Monthly Total Cost Trend",
+    "Total Cost by Line of Business",
+    "Total Cost by County",
+    "Total Cost by Age Category",
+    "Total Cost by Gender",
+    "ED vs IP Utilization Trend",
+    "Cost by Product",
+    "Cost by Product Type",
+    "Product-wise Utilization",
+    "County-wise PMPM",
+    "Pareto Cost Analysis (Top 5%)"
+]
+
+selected_prompt = st.selectbox("Select Analysis", prompts)
+
+
+# -----------------------------------
+# QUERY + CHART
+# -----------------------------------
+result = run_prompt(selected_prompt, filtered)
+
+fig = build_chart(result, selected_prompt)
+st.plotly_chart(fig, use_container_width=True)
+
+
+# -----------------------------------
+# INSIGHTS
+# -----------------------------------
+st.subheader("🧠 Insights")
+
+insights = generate_insights(selected_prompt, result)
+
+for ins in insights:
+    st.write("•", ins)
+
+
+# -----------------------------------
+# DATA VIEW
+# -----------------------------------
+st.subheader("📄 Data Sample")
+st.dataframe(result.head(50))
