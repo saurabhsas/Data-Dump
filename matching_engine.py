@@ -1,32 +1,59 @@
-import streamlit as st
+def generate_insights(prompt, df):
 
+    if df is None or df.empty:
+        return ["No insights available"]
 
-def apply_filters(df):
+    insights = []
 
-    filtered = df
+    # -----------------------------------
+    # Monthly Trend
+    # -----------------------------------
+    if prompt == "Monthly Total Cost Trend":
 
-    st.sidebar.header("🔍 Filters")
+        latest = df.sort_values("MONTH").groupby("GROUP").tail(1)
 
-    def multi_filter(col, label):
-        nonlocal filtered
+        for _, row in latest.iterrows():
+            insights.append(
+                f"{row['GROUP']} latest month cost: ${row['Value']:,.0f}"
+            )
 
-        if col not in df.columns:
-            return
+        trend = df.groupby("GROUP")["Value"].pct_change().mean()
 
-        options = sorted(df[col].dropna().unique())
+        for g, v in trend.items():
+            if v is not None:
+                insights.append(
+                    f"{g} average trend change: {v:.2%}"
+                )
 
-        selected = st.sidebar.multiselect(
-            label,
-            options,
-            default=[]
+    # -----------------------------------
+    # LOB
+    # -----------------------------------
+    elif prompt == "Total Cost by Line of Business":
+
+        top = df.sort_values("Value", ascending=False).head(1)
+
+        insights.append(
+            f"Top LOB: {top.iloc[0]['Dimension']} "
+            f"(${top.iloc[0]['Value']:,.0f})"
         )
 
-        if selected:
-            filtered = filtered[filtered[col].isin(selected)]
+    # -----------------------------------
+    # Utilization
+    # -----------------------------------
+    elif prompt == "ED vs IP Utilization Trend":
 
-    multi_filter("LINEOFBUSINESS", "Line of Business")
-    multi_filter("COUNTY", "County")
-    multi_filter("GENDER", "Gender")
-    multi_filter("AGE_CATEGORY", "Age Category")
+        totals = df.groupby("GROUP")[["EDVISITS", "IPVISITS"]].sum()
 
-    return filtered
+        for g in totals.index:
+            insights.append(
+                f"{g}: ED {int(totals.loc[g,'EDVISITS'])}, "
+                f"IP {int(totals.loc[g,'IPVISITS'])}"
+            )
+
+    # -----------------------------------
+    # Default
+    # -----------------------------------
+    else:
+        insights.append("Explore differences between Group1 and Group2.")
+
+    return insights
