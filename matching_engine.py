@@ -21,13 +21,25 @@ st.title("🏥 Matched Cohort Analytics Dashboard")
 
 
 # -----------------------------------
-# KPI STYLE
+# KPI STYLE (SAFE)
 # -----------------------------------
 st.markdown("""
 <style>
+div[data-testid="stMetric"] {
+    background-color: #ffffff;
+    padding: 12px;
+    border-radius: 12px;
+    box-shadow: 0px 2px 8px rgba(0,0,0,0.05);
+}
+
 div[data-testid="stMetricValue"] {
     font-size: 30px !important;
     font-weight: 700;
+}
+
+div[data-testid="stMetricLabel"] {
+    font-size: 14px;
+    font-weight: 600;
 }
 </style>
 """, unsafe_allow_html=True)
@@ -105,7 +117,7 @@ def format_val(k, v):
 
 
 # -----------------------------------
-# KPI RENDER
+# KPI RENDER (UPDATED)
 # -----------------------------------
 def render_kpis(title, kpis1, kpis2):
 
@@ -120,15 +132,25 @@ def render_kpis(title, kpis1, kpis2):
 
         pct = ((v1 - v2) / v2 * 100) if v2 != 0 else 0
 
+        # 🔥 Arrow logic
+        if pct > 0:
+            arrow = "↑"
+        elif pct < 0:
+            arrow = "↓"
+        else:
+            arrow = "→"
+
+        delta = f"{arrow} {abs(pct):.1f}%"
+
         cols[i % 4].metric(
             label=f"{ICON_MAP.get(key, '📊')} {key}",
             value=format_val(key, v1),
-            delta=f"{pct:+.1f}% vs other"
+            delta=delta
         )
 
 
 # -----------------------------------
-# KPI SECTION (RESTORED)
+# KPI SECTION
 # -----------------------------------
 st.markdown("## 📊 Key Metrics Overview")
 
