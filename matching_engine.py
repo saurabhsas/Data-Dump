@@ -21,7 +21,7 @@ st.title("🏥 Matched Cohort Analytics Dashboard")
 
 
 # -----------------------------------
-# KPI FONT SIZE
+# KPI STYLE
 # -----------------------------------
 st.markdown("""
 <style>
@@ -55,10 +55,9 @@ combined = pd.concat([g1_data, g2_data])
 
 
 # -----------------------------------
-# FILTERS (FAST + FIXED)
+# FILTERS
 # -----------------------------------
 filters = render_filter_ui(combined)
-
 filtered = apply_filters_cached(combined, filters)
 
 
@@ -70,20 +69,76 @@ def compute_kpis(df):
     members = df["MEMBER_ID"].nunique()
     total = df["PAID"].sum()
 
-    return members, total
+    return {
+        "Members": members,
+        "Total Cost": total,
+        "Medical Cost": df["MEDICAL_PAID"].sum(),
+        "Pharmacy Cost": df["RX_PAID"].sum(),
+        "ED Visits": df["EDVISITS"].sum(),
+        "IP Visits": df["IPVISITS"].sum(),
+        "PMPM": total / members if members else 0
+    }
 
 
-g1_members, g1_cost = compute_kpis(filtered[filtered["GROUP"] == "Group1"])
-g2_members, g2_cost = compute_kpis(filtered[filtered["GROUP"] == "Group2"])
+k1 = compute_kpis(filtered[filtered["GROUP"] == "Group1"])
+k2 = compute_kpis(filtered[filtered["GROUP"] == "Group2"])
 
 
 # -----------------------------------
-# KPI DISPLAY
+# KPI ICONS
 # -----------------------------------
+ICON_MAP = {
+    "Members": "👥",
+    "Total Cost": "💰",
+    "Medical Cost": "🏥",
+    "Pharmacy Cost": "💊",
+    "ED Visits": "🚑",
+    "IP Visits": "🛏️",
+    "PMPM": "📊"
+}
+
+
+def format_val(k, v):
+    if "Cost" in k or k == "PMPM":
+        return f"${v:,.0f}"
+    return f"{int(v):,}"
+
+
+# -----------------------------------
+# KPI RENDER
+# -----------------------------------
+def render_kpis(title, kpis1, kpis2):
+
+    st.markdown(f"### {title}")
+
+    cols = st.columns(4)
+
+    for i, key in enumerate(kpis1.keys()):
+
+        v1 = float(kpis1[key])
+        v2 = float(kpis2[key])
+
+        pct = ((v1 - v2) / v2 * 100) if v2 != 0 else 0
+
+        cols[i % 4].metric(
+            label=f"{ICON_MAP.get(key, '📊')} {key}",
+            value=format_val(key, v1),
+            delta=f"{pct:+.1f}% vs other"
+        )
+
+
+# -----------------------------------
+# KPI SECTION (RESTORED)
+# -----------------------------------
+st.markdown("## 📊 Key Metrics Overview")
+
 col1, col2 = st.columns(2)
 
-col1.metric("👥 Group1 Members", g1_members)
-col2.metric("👥 Group2 Members", g2_members)
+with col1:
+    render_kpis("Group1", k1, k2)
+
+with col2:
+    render_kpis("Group2", k2, k1)
 
 
 # -----------------------------------
@@ -123,7 +178,7 @@ st.plotly_chart(fig, use_container_width=True)
 # -----------------------------------
 # INSIGHTS
 # -----------------------------------
-st.subheader("🧠 Insights")
+st.markdown("## 🧠 Insights")
 
 insights = generate_insights(selected_prompt, result)
 
@@ -134,5 +189,5 @@ for ins in insights:
 # -----------------------------------
 # DATA SAMPLE
 # -----------------------------------
-st.subheader("📄 Data Sample")
+st.markdown("## 📄 Data Sample")
 st.dataframe(result.head(50))
