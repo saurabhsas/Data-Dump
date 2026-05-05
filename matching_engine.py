@@ -1,26 +1,42 @@
-import pandas as pd
+import streamlit as st
+
+
+def render_filter_ui(df):
+
+    st.sidebar.header("🔍 Filters")
+
+    selected = {}
+
+    if "LINEOFBUSINESS" in df:
+        selected["LINEOFBUSINESS"] = st.sidebar.multiselect(
+            "LOB", df["LINEOFBUSINESS"].unique()
+        )
+
+    if "COUNTY" in df:
+        selected["COUNTY"] = st.sidebar.multiselect(
+            "County", df["COUNTY"].unique()
+        )
+
+    if "GENDER" in df:
+        selected["GENDER"] = st.sidebar.multiselect(
+            "Gender", df["GENDER"].unique()
+        )
+
+    if "AGE_CATEGORY" in df:
+        selected["AGE_CATEGORY"] = st.sidebar.multiselect(
+            "Age Category", df["AGE_CATEGORY"].unique()
+        )
+
+    return selected
 
 
 @st.cache_data(show_spinner=False)
-def load_matched_datasets(df, matched):
+def apply_filters_cached(df, filters):
 
-    df["MEMBER_ID"] = df["MEMBER_ID"].astype(str)
+    filtered = df
 
-    valid_ids = set(df["MEMBER_ID"])
+    for col, vals in filters.items():
+        if vals:
+            filtered = filtered[filtered[col].isin(vals)]
 
-    # Keep only valid matches
-    matched = matched[
-        matched["G1_MEMBER_ID"].isin(valid_ids) &
-        matched["G2_MEMBER_ID"].isin(valid_ids)
-    ]
-
-    g1_ids = matched["G1_MEMBER_ID"].unique()
-    g2_ids = matched["G2_MEMBER_ID"].unique()
-
-    g1 = df[df["MEMBER_ID"].isin(g1_ids)].copy()
-    g2 = df[df["MEMBER_ID"].isin(g2_ids)].copy()
-
-    g1["GROUP"] = "Group1"
-    g2["GROUP"] = "Group2"
-
-    return g1, g2, matched
+    return filtered
