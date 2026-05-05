@@ -1,42 +1,35 @@
+import pandas as pd
 import streamlit as st
 
 
-def render_filter_ui(df):
-
-    st.sidebar.header("🔍 Filters")
-
-    selected = {}
-
-    if "LINEOFBUSINESS" in df:
-        selected["LINEOFBUSINESS"] = st.sidebar.multiselect(
-            "LOB", df["LINEOFBUSINESS"].unique()
-        )
-
-    if "COUNTY" in df:
-        selected["COUNTY"] = st.sidebar.multiselect(
-            "County", df["COUNTY"].unique()
-        )
-
-    if "GENDER" in df:
-        selected["GENDER"] = st.sidebar.multiselect(
-            "Gender", df["GENDER"].unique()
-        )
-
-    if "AGE_CATEGORY" in df:
-        selected["AGE_CATEGORY"] = st.sidebar.multiselect(
-            "Age Category", df["AGE_CATEGORY"].unique()
-        )
-
-    return selected
+def prepare_month(df):
+    if "ELIGIBILITYYEARANDMONTH" in df.columns:
+        df["MONTH"] = df["ELIGIBILITYYEARANDMONTH"].astype(int)
+    return df
 
 
 @st.cache_data(show_spinner=False)
-def apply_filters_cached(df, filters):
+def run_prompt(prompt, df):
 
-    filtered = df
+    df = prepare_month(df)
 
-    for col, vals in filters.items():
-        if vals:
-            filtered = filtered[filtered[col].isin(vals)]
+    if prompt == "Monthly Total Cost Trend":
+        return (
+            df.groupby(["MONTH", "GROUP"])["PAID"]
+            .sum()
+            .reset_index()
+            .rename(columns={"PAID": "Value"})
+        )
 
-    return filtered
+    if prompt == "Total Cost by Line of Business":
+        return (
+            df.groupby(["LINEOFBUSINESS", "GROUP"])["PAID"]
+            .sum()
+            .reset_index()
+            .rename(columns={
+                "LINEOFBUSINESS": "Dimension",
+                "PAID": "Value"
+            })
+        )
+
+    return df
