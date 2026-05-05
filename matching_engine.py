@@ -1,30 +1,29 @@
-# visualization/chart_router.py
+# core/insights_engine.py
 
-import plotly.express as px
-
-
-def build_chart(df, prompt):
+def generate_insights(prompt, df):
 
     if df is None or df.empty:
-        return px.scatter(title="No data available")
+        return ["No insights available"]
 
-    # -------------------------------
-    if prompt == "Monthly Total Cost Trend":
-        return px.line(df, x="MONTH", y="Value", color="GROUP", markers=True)
+    insights = []
 
-    if prompt == "Medical vs Pharmacy Cost Split":
-        return px.bar(df, x="Dimension", y="Value", color="GROUP", barmode="group")
+    if "Monthly" in prompt:
+        for g in df["GROUP"].unique():
+            temp = df[df["GROUP"] == g]
+            change = (temp["Value"].iloc[-1] - temp["Value"].iloc[0])
+            insights.append(f"{g} change: {change:,.0f}")
 
-    if "Trend" in prompt and "MONTH" in df.columns:
-        return px.line(df, x="MONTH", y=df.columns[-1], color="GROUP")
+    elif "Line of Business" in prompt:
+        top = df.sort_values("Value", ascending=False).iloc[0]
+        insights.append(f"Top LOB: {top['Dimension']}")
 
-    if "ED vs IP" in prompt:
-        return px.line(df, x="MONTH", y=["EDVISITS", "IPVISITS"], color="GROUP")
+    elif "Top 10" in prompt:
+        insights.append("Top members drive majority cost.")
 
-    if "Avoidable Cost Analysis" in prompt:
-        return px.bar(df, x="GROUP", y=["AVOIDED", "AVOIDIP"], barmode="group")
+    elif "Pareto" in prompt:
+        insights.append("Top 5% contributing highest cost.")
 
-    if "Dimension" in df.columns:
-        return px.bar(df, x="Dimension", y="Value", color="GROUP", barmode="group")
+    else:
+        insights.append("Compare Group1 vs Group2 patterns.")
 
-    return px.bar(df)
+    return insights
