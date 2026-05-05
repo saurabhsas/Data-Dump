@@ -21,13 +21,43 @@ st.title("🏥 Matched Cohort Analytics Dashboard")
 
 
 # -----------------------------------
-# KPI STYLE
+# 🎨 PREMIUM KPI STYLE
 # -----------------------------------
 st.markdown("""
 <style>
-div[data-testid="stMetricValue"] {
-    font-size: 30px !important;
+.kpi-card {
+    padding: 18px;
+    border-radius: 16px;
+    height: 140px;
+    box-shadow: 0px 4px 12px rgba(0,0,0,0.08);
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    text-align: center;
+    transition: 0.2s ease;
+}
+
+.kpi-card:hover {
+    transform: translateY(-3px);
+    box-shadow: 0px 6px 18px rgba(0,0,0,0.12);
+}
+
+.kpi-title {
+    font-size: 14px;
+    color: #555;
+    font-weight: 600;
+}
+
+.kpi-value {
+    font-size: 26px;
     font-weight: 700;
+    margin-top: 6px;
+}
+
+.kpi-delta {
+    font-size: 13px;
+    margin-top: 6px;
+    font-weight: 600;
 }
 </style>
 """, unsafe_allow_html=True)
@@ -85,7 +115,7 @@ k2 = compute_kpis(filtered[filtered["GROUP"] == "Group2"])
 
 
 # -----------------------------------
-# KPI ICONS
+# ICON MAP
 # -----------------------------------
 ICON_MAP = {
     "Members": "👥",
@@ -105,12 +135,11 @@ def format_val(k, v):
 
 
 # -----------------------------------
-# KPI RENDER
+# KPI RENDER (PREMIUM)
 # -----------------------------------
 def render_kpis(title, kpis1, kpis2):
 
     st.markdown(f"### {title}")
-
     cols = st.columns(4)
 
     for i, key in enumerate(kpis1.keys()):
@@ -120,15 +149,39 @@ def render_kpis(title, kpis1, kpis2):
 
         pct = ((v1 - v2) / v2 * 100) if v2 != 0 else 0
 
-        cols[i % 4].metric(
-            label=f"{ICON_MAP.get(key, '📊')} {key}",
-            value=format_val(key, v1),
-            delta=f"{pct:+.1f}% vs other"
-        )
+        # 🎯 Color logic
+        if "Cost" in key or key == "PMPM":
+            bg_color = "#fdecea" if pct > 0 else "#eafaf1"
+            text_color = "#e74c3c" if pct > 0 else "#2ecc71"
+        else:
+            bg_color = "#eafaf1" if pct > 0 else "#fdecea"
+            text_color = "#2ecc71" if pct > 0 else "#e74c3c"
+
+        arrow = "↑" if pct > 0 else "↓"
+
+        html = f"""
+        <div class="kpi-card" style="background:{bg_color};">
+
+            <div class="kpi-title">
+                {ICON_MAP.get(key, '📊')} {key}
+            </div>
+
+            <div class="kpi-value">
+                {format_val(key, v1)}
+            </div>
+
+            <div class="kpi-delta" style="color:{text_color};">
+                {arrow} {abs(pct):.1f}% vs other
+            </div>
+
+        </div>
+        """
+
+        cols[i % 4].markdown(html, unsafe_allow_html=True)
 
 
 # -----------------------------------
-# KPI SECTION (RESTORED)
+# KPI SECTION
 # -----------------------------------
 st.markdown("## 📊 Key Metrics Overview")
 
