@@ -1,204 +1,115 @@
-import streamlit as st
+# core/matching_engine.py
+
 import pandas as pd
-
-# Core modules
-from core.data_loader import load_data
-from core.filters import apply_filters
-from core.query_router import run_prompt
-from core.insights_engine import generate_insights
-
-from core.group_match_loader import load_group_match_data
-from core.matching_engine import caliper_matching_sas
-from core.matched_data_loader import load_matched_datasets
-
-from visualization.chart_router import build_chart
+import numpy as np
 
 
-# -----------------------------------
-# PAGE CONFIG
-# -----------------------------------
-st.set_page_config(layout="wide")
-st.title("🏥 Matched Cohort Analytics Dashboard")
+def caliper_matching_sas(g1, g2, caliper=0.01):
+    """
+    Perform 1:1 matching using caliper on match_score
+    with strict no-reuse logic (SAS equivalent).
+    """
 
+    # ---------------------------------------
+    # STEP 1: CLEAN INPUT
+    # ---------------------------------------
+    g1 = g1[["MEMBER_UCI", "MATCH_SCORE", "LOB", "MEMBERID"]].drop_duplicates()
+    g2 = g2[["MEMBER_UCI", "MATCH_SCORE", "LOB", "MEMBERID"]].drop_duplicates()
 
-# -----------------------------------
-# 🔥 KPI FONT SIZE OVERRIDE (KEY CHANGE)
-# -----------------------------------
-st.markdown("""
-<style>
-/* KPI Value */
-div[data-testid="stMetricValue"] {
-    font-size: 30px !important;
-    font-weight: 700;
-}
+    # Convert types
+    g1["MATCH_SCORE"] = pd.to_numeric(g1["MATCH_SCORE"], errors="coerce")
+    g2["MATCH_SCORE"] = pd.to_numeric(g2["MATCH_SCORE"], errors="coerce")
 
-/* KPI Label */
-div[data-testid="stMetricLabel"] {
-    font-size: 14px !important;
-}
+    # Drop null scores
+    g1 = g1.dropna(subset=["MATCH_SCORE"])
+    g2 = g2.dropna(subset=["MATCH_SCORE"])
 
-/* KPI Delta */
-div[data-testid="stMetricDelta"] {
-    font-size: 13px !important;
-}
-</style>
-""", unsafe_allow_html=True)
+    # ---------------------------------------
+    # STEP 2: CREATE ALL POSSIBLE PAIRS
+    # ---------------------------------------
+    g1["key"] = 1
+    g2["key"] = 1
 
+    pairs = g1.merge(g2, on="key", suffixes=("_G1", "_G2")).drop("key", axis=1)
 
-# -----------------------------------
-# CACHE MATCHING
-# -----------------------------------
-@st.cache_data(show_spinner=False)
-def get_matched():
-    g1, g2 = load_group_match_data()
-    return caliper_matching_sas(g1, g2, caliper=0.01)
+    # ---------------------------------------
+    # STEP 3: CALCULATE DIFFERENCE
+    # ---------------------------------------
+    pairs["diff"] = np.abs(pairs["MATCH_SCORE_G1"] - pairs["MATCH_SCORE_G2"])
 
+    # ---------------------------------------
+    # STEP 4: APPLY CALIPER + CONDITIONS
+    # ---------------------------------------
+    pairs = pairs[
+        (pairs["diff"] < caliper) &
+        (pairs["LOB_G1"] == pairs["LOB_G2"]) &
+        (pairs["MEMBER_UCI_G1"] != pairs["MEMBER_UCI_G2"])
+    ]
 
-# -----------------------------------
-# LOAD DATA
-# -----------------------------------
-df = load_data()
-matched = get_matched()
+    if pairs.empty:
+        return pd.DataFrame(columns=[
+            "G1_MEMBER_UCI",
+            "G2_MEMBER_UCI",
+            "G1_MEMBERID",
+            "G2_MEMBERID",
+            "SCORE_DIFF"
+        ])
 
-g1, g2 = load_group_match_data()
-g1_data, g2_data = load_matched_datasets(df, matched)
+    # ---------------------------------------
+    # STEP 5: GLOBAL SORT (IMPORTANT FIX)
+    # ---------------------------------------
+    pairs = pairs.sort_values("diff")   # 🔥 key improvement
 
-combined = pd.concat([g1_data, g2_data])
+    # ---------------------------------------
+    # STEP 6: STRICT 1:1 MATCHING
+    # ---------------------------------------
+    used_g1 = set()
+    used_g2 = set()
 
+    matched_rows = []
 
-# -----------------------------------
-# FILTERS
-# -----------------------------------
-filtered = apply_filters(combined)
+    for _, row in pairs.iterrows():
 
+        g1_uci = row["MEMBER_UCI_G1"]
+        g2_uci = row["MEMBER_UCI_G2"]
 
-# -----------------------------------
-# KPI CALCULATION (NUMERIC ONLY)
-# -----------------------------------
-def compute_kpis(df):
+        if g1_uci not in used_g1 and g2_uci not in used_g2:
 
-    members = df["MEMBERID"].nunique()
-    total = df["PAID"].sum()
+            matched_rows.append({
+                "G1_MEMBER_UCI": g1_uci,
+                "G2_MEMBER_UCI": g2_uci,
+                "G1_MEMBERID": str(row["MEMBERID_G1"]),
+                "G2_MEMBERID": str(row["MEMBERID_G2"]),
+                "SCORE_DIFF": row["diff"],
+                "LOB": row["LOB_G1"]
+            })
 
-    return {
-        "Members": members,
-        "Total Cost": total,
-        "Medical Cost": df["MEDICAL_PAID"].sum(),
-        "Pharmacy Cost": df["RX_PAID"].sum(),
-        "ED Visits": df["EDVISITS"].sum(),
-        "IP Visits": df["IPVISITS"].sum(),
-        "PMPM": total / members if members else 0
-    }
+            used_g1.add(g1_uci)
+            used_g2.add(g2_uci)
 
+    matched_df = pd.DataFrame(matched_rows)
 
-k1 = compute_kpis(filtered[filtered["GROUP"] == "Group1"])
-k2 = compute_kpis(filtered[filtered["GROUP"] == "Group2"])
+    # ---------------------------------------
+    # STEP 7: FINAL SAFETY ENFORCEMENT
+    # ---------------------------------------
+    if not matched_df.empty:
 
+        matched_df = matched_df.drop_duplicates(subset=["G1_MEMBER_UCI"])
+        matched_df = matched_df.drop_duplicates(subset=["G2_MEMBER_UCI"])
 
-# -----------------------------------
-# ICON MAP
-# -----------------------------------
-ICON_MAP = {
-    "Members": "👥",
-    "Total Cost": "💰",
-    "Medical Cost": "🏥",
-    "Pharmacy Cost": "💊",
-    "ED Visits": "🚑",
-    "IP Visits": "🛏️",
-    "PMPM": "📊"
-}
-
-
-# -----------------------------------
-# FORMAT FUNCTION
-# -----------------------------------
-def format_val(key, value):
-    if "Cost" in key or key == "PMPM":
-        return f"${value:,.0f}"
-    return f"{int(value):,}"
-
-
-# -----------------------------------
-# KPI DISPLAY
-# -----------------------------------
-def render_kpis(title, kpis1, kpis2):
-
-    st.markdown(f"### {title}")
-
-    cols = st.columns(4)
-
-    for i, key in enumerate(kpis1.keys()):
-
-        v1 = float(kpis1[key])
-        v2 = float(kpis2[key])
-
-        pct = ((v1 - v2) / v2 * 100) if v2 != 0 else 0
-
-        cols[i % 4].metric(
-            label=f"{ICON_MAP.get(key, '📊')} {key}",
-            value=format_val(key, v1),
-            delta=f"{pct:+.1f}% vs G2"
+        # Force equal counts (absolute safety)
+        min_count = min(
+            matched_df["G1_MEMBER_UCI"].nunique(),
+            matched_df["G2_MEMBER_UCI"].nunique()
         )
 
+        matched_df = matched_df.head(min_count)
 
-# -----------------------------------
-# KPI SECTION
-# -----------------------------------
-st.markdown("## 📊 Key Metrics Overview")
+    # ---------------------------------------
+    # STEP 8: VALIDATION (CRITICAL)
+    # ---------------------------------------
+    if not matched_df.empty:
+        assert matched_df["G1_MEMBER_UCI"].nunique() == matched_df["G2_MEMBER_UCI"].nunique(), \
+            "❌ Matching imbalance detected"
 
-col1, col2 = st.columns(2)
-
-with col1:
-    render_kpis("Group1", k1, k2)
-
-with col2:
-    render_kpis("Group2", k2, k1)
-
-
-# -----------------------------------
-# PROMPTS
-# -----------------------------------
-st.markdown("## 📈 Analysis")
-
-prompts = [
-    "Monthly Total Cost Trend",
-    "Total Cost by Line of Business",
-    "Total Cost by County",
-    "Total Cost by Age Category",
-    "Total Cost by Gender",
-    "ED vs IP Utilization Trend",
-    "Cost by Product",
-    "Cost by Product Type",
-    "Product-wise Utilization",
-    "County-wise PMPM",
-    "Pareto Cost Analysis (Top 5%)"
-]
-
-selected_prompt = st.selectbox("Select Analysis", prompts)
-
-
-# -----------------------------------
-# QUERY + CHART
-# -----------------------------------
-result = run_prompt(selected_prompt, filtered)
-
-fig = build_chart(result, selected_prompt)
-st.plotly_chart(fig, use_container_width=True)
-
-
-# -----------------------------------
-# INSIGHTS
-# -----------------------------------
-st.markdown("## 🧠 Insights")
-
-insights = generate_insights(selected_prompt, result)
-
-for ins in insights:
-    st.write("•", ins)
-
-
-# -----------------------------------
-# DATA VIEW
-# -----------------------------------
-st.markdown("## 📄 Data Sample")
-st.dataframe(result.head(50))
+    return matched_df
