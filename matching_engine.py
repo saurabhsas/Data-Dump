@@ -1,59 +1,23 @@
-def caliper_matching_sas(g1, g2, caliper=0.01):
+def load_matched_datasets(df, matched):
 
-    import pandas as pd
-    import numpy as np
+    df["MEMBER_ID"] = df["MEMBER_ID"].astype(str)
 
-    g1 = g1[["MEMBER_UCI", "MATCH_SCORE", "LOB", "MEMBER_ID"]].drop_duplicates()
-    g2 = g2[["MEMBER_UCI", "MATCH_SCORE", "LOB", "MEMBER_ID"]].drop_duplicates()
+    valid_ids = set(df["MEMBER_ID"])
 
-    g1["MATCH_SCORE"] = pd.to_numeric(g1["MATCH_SCORE"], errors="coerce")
-    g2["MATCH_SCORE"] = pd.to_numeric(g2["MATCH_SCORE"], errors="coerce")
-
-    g1 = g1.dropna(subset=["MATCH_SCORE"])
-    g2 = g2.dropna(subset=["MATCH_SCORE"])
-
-    # Cross join
-    g1["key"] = 1
-    g2["key"] = 1
-
-    pairs = g1.merge(g2, on="key", suffixes=("_G1", "_G2")).drop("key", axis=1)
-
-    # Diff
-    pairs["diff"] = abs(pairs["MATCH_SCORE_G1"] - pairs["MATCH_SCORE_G2"])
-
-    # Apply filters
-    pairs = pairs[
-        (pairs["diff"] < caliper) &
-        (pairs["LOB_G1"] == pairs["LOB_G2"])
+    # 🔥 KEEP ONLY VALID MATCHES
+    matched = matched[
+        matched["G1_MEMBER_ID"].isin(valid_ids) &
+        matched["G2_MEMBER_ID"].isin(valid_ids)
     ]
 
-    # 🔥 GLOBAL SORT
-    pairs = pairs.sort_values("diff")
+    # 🔥 DO NOT TRIM AGAIN (IMPORTANT)
+    g1_ids = matched["G1_MEMBER_ID"].unique()
+    g2_ids = matched["G2_MEMBER_ID"].unique()
 
-    used_g1 = set()
-    used_g2 = set()
-    out = []
+    g1 = df[df["MEMBER_ID"].isin(g1_ids)].copy()
+    g2 = df[df["MEMBER_ID"].isin(g2_ids)].copy()
 
-    for _, row in pairs.iterrows():
+    g1["GROUP"] = "Group1"
+    g2["GROUP"] = "Group2"
 
-        g1_uci = row["MEMBER_UCI_G1"]
-        g2_uci = row["MEMBER_UCI_G2"]
-
-        if g1_uci not in used_g1 and g2_uci not in used_g2:
-
-            out.append({
-                "G1_MEMBER_ID": str(row["MEMBER_ID_G1"]),
-                "G2_MEMBER_ID": str(row["MEMBER_ID_G2"]),
-                "diff": row["diff"]
-            })
-
-            used_g1.add(g1_uci)
-            used_g2.add(g2_uci)
-
-    matched = pd.DataFrame(out)
-
-    # ✅ VALIDATION
-    print("Matched G1:", matched["G1_MEMBER_ID"].nunique())
-    print("Matched G2:", matched["G2_MEMBER_ID"].nunique())
-
-    return matched
+    return g1, g2, matched
