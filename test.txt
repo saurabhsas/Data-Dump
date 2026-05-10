@@ -10,147 +10,160 @@ import numpy as np
 def run_summary_pipeline():
 
     # -----------------------------------
-    # 🔥 LOAD MATCHED MEMBERS (REPLACEMENT)
+    # LOAD MATCHED MEMBERS
     # -----------------------------------
     matched_df = pd.read_csv("data/matched_members.csv", dtype=str)
 
     matched_df["G1_MEMBER_ID"] = matched_df["G1_MEMBER_ID"].astype(str)
     matched_df["G2_MEMBER_ID"] = matched_df["G2_MEMBER_ID"].astype(str)
 
-    member_ids_g1 = tuple(matched_df["G1_MEMBER_ID"].unique())
-    member_ids_g2 = tuple(matched_df["G2_MEMBER_ID"].unique())
+    g1_ids = matched_df["G1_MEMBER_ID"].unique().tolist()
+    g2_ids = matched_df["G2_MEMBER_ID"].unique().tolist()
 
     # -----------------------------------
-    # FORMAT FOR SQL (SAFE)
+    # FORMAT SQL IDS
     # -----------------------------------
     def format_ids(ids):
         return "(" + ",".join([f"'{x}'" for x in ids]) + ")"
 
-    member_ids_g1_sql = format_ids(member_ids_g1)
-    member_ids_g2_sql = format_ids(member_ids_g2)
-
-    # ============================================================
-    # 🔹 GROUP 1 PROCESSING
-    # ============================================================
-    conn = nzpy.connect(
-        user='XXXXXXXXXX',
-        password='XXXXXXXXXX',
-        host='npsaas_dev_db',
-        port=5480,
-        database='IRADW_UAT'
-    )
-
-    query = f"""
-    SELECT DISTINCT
-        MEMBERID as MEMBER_ID,
-        ACCOUNTID,
-        CLAIMID,
-        FINAL_PAID_CLAIM,
-        MR_LINE_CASE as HCG_SVC_CAT_LINE,
-        MR_LINE as HCG_SVC_CAT,
-        MR_LINE_DESC1,
-        MR_LINE_DESC2,
-        MR_LINE_DESC3,
-        PAID,
-        SVC_STRT_DT,
-        MR_ALLOWED
-    FROM IRADW_UAT.DM_M360.CUDA_CLAIMS MAIN
-    WHERE MAIN.SVC_STRT_DT BETWEEN '20250101' AND '20251231'
-    AND CLAIM_STATUS = 'FINAL'
-    AND FINAL_PAID_CLAIM = 'Y'
-    AND MEMBERID IN {member_ids_g1_sql}
-    """
-
-    CLAIMS_DATA_GROUP1_MED = pd.read_sql(query, conn)
-    conn.close()
+    g1_ids_sql = format_ids(g1_ids)
+    g2_ids_sql = format_ids(g2_ids)
 
     # -----------------------------------
-    # CLEAN DATA (CRITICAL FIX)
+    # DB CONNECTION
     # -----------------------------------
-    CLAIMS_DATA_GROUP1_MED["PAID"] = pd.to_numeric(CLAIMS_DATA_GROUP1_MED["PAID"], errors="coerce")
-    CLAIMS_DATA_GROUP1_MED["MR_ALLOWED"] = pd.to_numeric(CLAIMS_DATA_GROUP1_MED["MR_ALLOWED"], errors="coerce")
-    CLAIMS_DATA_GROUP1_MED["SVC_STRT_DT"] = pd.to_datetime(
-        CLAIMS_DATA_GROUP1_MED["SVC_STRT_DT"], errors="coerce"
-    ).dt.normalize()
-
-    CLAIMS_DATA_GROUP1_MED["MR_LINE_DESC2"] = CLAIMS_DATA_GROUP1_MED["MR_LINE_DESC2"].fillna("").astype(str)
-    CLAIMS_DATA_GROUP1_MED["MR_LINE_DESC3"] = CLAIMS_DATA_GROUP1_MED["MR_LINE_DESC3"].fillna("").astype(str)
-    CLAIMS_DATA_GROUP1_MED["MR_LINE_DESC1"] = CLAIMS_DATA_GROUP1_MED["MR_LINE_DESC1"].fillna("").astype(str)
-
-    # -----------------------------------
-    # BUILD SVC_CAT
-    # -----------------------------------
-    CLAIMS_DATA_GROUP1_MED["SVC_CAT"] = CLAIMS_DATA_GROUP1_MED[
-        ["MR_LINE_DESC2", "MR_LINE_DESC3"]
-    ].apply(lambda x: '-'.join(x.dropna().astype(str)), axis=1)
-
-    svc_upper = CLAIMS_DATA_GROUP1_MED["SVC_CAT"].str.upper()
-    mr = CLAIMS_DATA_GROUP1_MED["MR_LINE_DESC1"]
-
-    # -----------------------------------
-    # CONDITIONS (FIXED)
-    # -----------------------------------
-    conditions = [
-        ((mr == "FIP") & svc_upper.isin(["ALCOHOL AND DRUG ABUSE-HOSPITAL", "ALCOHOL AND DRUG ABUSE-RESIDENTIAL"])),
-        ((mr == "FIP") & svc_upper.isin(["MAT NORM DELIVERY", "MAT NORM DELIVERY-MOM\\BABY CMBND"])),
-        ((mr == "FIP") & svc_upper.isin(["MAT CSECT DELIVERY", "MAT CSECT DELIVERY-MOM\\BABY CMBND"])),
-        ((mr == "FIP") & svc_upper.isin(["PSYCHIATRIC-HOSPITAL", "PSYCHIATRIC-RESIDENTIAL"])),
-        ((mr == "FIP") & svc_upper.isin(["WELL NEWBORN-CSECT DELIVERY", "WELL NEWBORN-UNKNOWN DELIVERY"])),
-
-        ((mr == "FOP") & svc_upper.isin(["RADIOLOGY GENERAL-DIAGNOSTIC", "RADIOLOGY GENERAL-THERAPEUTIC"])),
-        ((mr == "FOP") & svc_upper.isin(["RADIOLOGY - CT/MRI/PET-CT SCAN", "RADIOLOGY - CT/MRI/PET-MRI", "RADIOLOGY - CT/MRI/PET-PET"])),
-
-        ((mr == "PROF") & svc_upper.isin(["INPATIENT VISITS-MEDICAL"])),
-
-        ((mr == "OTH") & svc_upper.isin(["HOME HEALTH CARE-HH"])),
-
-        ((mr == "ADDL") & svc_upper.isin(["BENEFITS OTHER-GENERAL"]))
-    ]
-
-    # Ensure boolean arrays
-    conditions = [cond.fillna(False) for cond in conditions]
-
-    choices = [
-        "Alcohol and Drug Abuse",
-        "Mat Norm Delivery",
-        "Mat Csect Delivery",
-        "Psychiatric",
-        "Well Newborn",
-        "Radiology General",
-        "Radiology - CT/MRI/PET",
-        "Inpatient Visits",
-        "Home Health Care",
-        "Benefits Other"
-    ]
-
-    CLAIMS_DATA_GROUP1_MED["SVC_CAT2"] = np.select(
-        conditions,
-        choices,
-        default=CLAIMS_DATA_GROUP1_MED["SVC_CAT"]
-    )
-
-    # -----------------------------------
-    # FINAL CATEGORY
-    # -----------------------------------
-    CLAIMS_DATA_GROUP1_MED["MR_LINE_DESC1_FINAL"] = CLAIMS_DATA_GROUP1_MED["MR_LINE_DESC1"]
-
-    # -----------------------------------
-    # SUMMARY
-    # -----------------------------------
-    Summary_Group1 = (
-        CLAIMS_DATA_GROUP1_MED.groupby(["MR_LINE_DESC1_FINAL", "SVC_CAT2"])
-        .agg(
-            Total_Claim_Count=("CLAIMID", "nunique"),
-            Total_Paid_Amount=("PAID", "sum")
+    def get_connection():
+        return nzpy.connect(
+            user='XXXXXXXX',
+            password='XXXXXXXX',
+            host='npsaas_dev_db',
+            port=5480,
+            database='IRADW_UAT'
         )
-        .reset_index()
-    )
 
-    # ============================================================
-    # 🔹 GROUP 2 (SAME LOGIC REUSED)
-    # ============================================================
-    CLAIMS_DATA_GROUP2_MED = CLAIMS_DATA_GROUP1_MED.copy()
-    Summary_Group2 = Summary_Group1.copy()
+    # -----------------------------------
+    # COMMON TRANSFORMATION FUNCTION
+    # -----------------------------------
+    def process_group(member_ids_sql):
+
+        conn = get_connection()
+
+        query = f"""
+        SELECT DISTINCT
+            MEMBERID as MEMBER_ID,
+            ACCOUNTID,
+            CLAIMID,
+            FINAL_PAID_CLAIM,
+            MR_LINE_CASE,
+            MR_LINE,
+            MR_LINE_DESC1,
+            MR_LINE_DESC2,
+            MR_LINE_DESC3,
+            PAID,
+            SVC_STRT_DT,
+            MR_ALLOWED
+        FROM IRADW_UAT.DM_M360.CUDA_CLAIMS MAIN
+        WHERE MAIN.SVC_STRT_DT BETWEEN '20250101' AND '20251231'
+        AND CLAIM_STATUS = 'FINAL'
+        AND FINAL_PAID_CLAIM = 'Y'
+        AND MEMBERID IN {member_ids_sql}
+        """
+
+        df = pd.read_sql(query, conn)
+        conn.close()
+
+        # -----------------------------------
+        # CLEANING
+        # -----------------------------------
+        df["PAID"] = pd.to_numeric(df["PAID"], errors="coerce")
+        df["MR_ALLOWED"] = pd.to_numeric(df["MR_ALLOWED"], errors="coerce")
+
+        df["MR_LINE_DESC1"] = df["MR_LINE_DESC1"].fillna("").astype(str)
+        df["MR_LINE_DESC2"] = df["MR_LINE_DESC2"].fillna("").astype(str)
+        df["MR_LINE_DESC3"] = df["MR_LINE_DESC3"].fillna("").astype(str)
+
+        # -----------------------------------
+        # BUILD SVC_CAT
+        # -----------------------------------
+        df["SVC_CAT"] = (
+            df["MR_LINE_DESC2"] + "-" + df["MR_LINE_DESC3"]
+        )
+
+        # 🔥 FIX TRAILING "-"
+        df["SVC_CAT"] = df["SVC_CAT"].str.strip("-").str.strip()
+
+        svc_upper = df["SVC_CAT"].str.upper()
+        mr = df["MR_LINE_DESC1"]
+
+        # -----------------------------------
+        # CONDITIONS (SAFE BOOLEAN)
+        # -----------------------------------
+        conditions = [
+            ((mr == "FIP") & svc_upper.str.contains("ALCOHOL")),
+            ((mr == "FIP") & svc_upper.str.contains("MAT NORM")),
+            ((mr == "FIP") & svc_upper.str.contains("MAT CSECT")),
+            ((mr == "FIP") & svc_upper.str.contains("PSYCHIATRIC")),
+            ((mr == "FIP") & svc_upper.str.contains("NEWBORN")),
+
+            ((mr == "FOP") & svc_upper.str.contains("RADIOLOGY")),
+
+            ((mr == "PROF") & svc_upper.str.contains("INPATIENT VISITS")),
+
+            ((mr == "OTH") & svc_upper.str.contains("HOME HEALTH")),
+
+            ((mr == "ADDL") & svc_upper.str.contains("BENEFITS"))
+        ]
+
+        # Ensure boolean arrays
+        conditions = [c.fillna(False) for c in conditions]
+
+        choices = [
+            "Alcohol and Drug Abuse",
+            "Mat Norm Delivery",
+            "Mat Csect Delivery",
+            "Psychiatric",
+            "Well Newborn",
+            "Radiology",
+            "Inpatient Visits",
+            "Home Health Care",
+            "Benefits Other"
+        ]
+
+        df["SVC_CAT2"] = np.select(
+            conditions,
+            choices,
+            default=df["SVC_CAT"]
+        )
+
+        # -----------------------------------
+        # FINAL CATEGORY
+        # -----------------------------------
+        df["MR_LINE_DESC1_FINAL"] = df["MR_LINE_DESC1"]
+
+        # -----------------------------------
+        # FINAL CLEAN (REMOVE TRAILING "-")
+        # -----------------------------------
+        df["SVC_CAT2"] = df["SVC_CAT2"].str.strip("-").str.strip()
+
+        # -----------------------------------
+        # AGGREGATION
+        # -----------------------------------
+        summary = (
+            df.groupby(["MR_LINE_DESC1_FINAL", "SVC_CAT2"])
+            .agg(
+                Total_Claim_Count=("CLAIMID", "nunique"),
+                Total_Paid_Amount=("PAID", "sum")
+            )
+            .reset_index()
+        )
+
+        return summary
+
+    # -----------------------------------
+    # RUN BOTH GROUPS
+    # -----------------------------------
+    Summary_Group1 = process_group(g1_ids_sql)
+    Summary_Group2 = process_group(g2_ids_sql)
 
     Summary_Group1["GROUP"] = "Group1"
     Summary_Group2["GROUP"] = "Group2"
