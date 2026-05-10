@@ -1,252 +1,91 @@
-import streamlit as st
-import pandas as pd
-
-from core.data_loader import load_data
-from core.filters import render_filter_ui, apply_filters_cached
-from core.query_router import run_prompt
-from core.insights_engine import generate_insights
-
-from core.group_match_loader import load_group_match_data
-from core.matching_engine import multi_caliper_matching
-from core.matched_data_loader import load_matched_datasets
-
-from visualization.chart_router import build_chart
-from utils.constants import PROMPTS
-
-
-# -----------------------------------
-# PAGE CONFIG
-# -----------------------------------
-st.set_page_config(layout="wide")
-st.title("🏥 Matched Cohort Analytics Dashboard")
-
-
-# -----------------------------------
-# STYLE FIX (BLUE SELECTION)
-# -----------------------------------
-st.markdown("""
-<style>
-div[data-baseweb="tag"] {
-    background-color: #1f77b4 !important;
-    color: white !important;
-}
-div[data-baseweb="tag"] span {
-    color: white !important;
-    font-weight: 500;
-}
-</style>
-""", unsafe_allow_html=True)
-
-
-# -----------------------------------
-# CACHE MATCHING
-# -----------------------------------
-@st.cache_data(show_spinner=False)
-def get_matched():
-    g1, g2 = load_group_match_data()
-    return multi_caliper_matching(g1, g2)
-
-
-# -----------------------------------
-# LOAD DATA
-# -----------------------------------
-df = load_data()
-matched = get_matched()
-
-
-# ===================================
-# 🎛 MATCHING QUALITY
-# ===================================
-st.markdown("## 🎛 Matching Quality")
-
-CALIPER_DESC = {
-    "1e-05": "Very Strict (5 decimal precision match)",
-    "0.0001": "Strict (4 decimal precision)",
-    "0.001": "Moderate (3 decimal precision)",
-    "0.02": "Loose match (broader similarity)",
-    "no_caliper": "Fallback match (ensures full coverage)"
-}
-
-available_calipers = ["ALL"] + sorted(matched["caliper_used"].unique())
-
-
-# -----------------------------------
-# SESSION STATE
-# -----------------------------------
-if "selected_calipers" not in st.session_state:
-    st.session_state.selected_calipers = ["ALL"]
-
-
-# -----------------------------------
-# FORM (MULTI + APPLY)
-# -----------------------------------
-with st.form("caliper_form"):
-
-    selected = st.multiselect(
-        "Select Matching Precision Levels",
-        options=available_calipers,
-        default=st.session_state.selected_calipers
-    )
-
-    apply_btn = st.form_submit_button("Apply")
-
-    if apply_btn:
-        st.session_state.selected_calipers = selected
-
-
-selected_values = st.session_state.selected_calipers
-
-
-# -----------------------------------
-# APPLY FILTER
-# -----------------------------------
-if "ALL" in selected_values or len(selected_values) == 0:
-    filtered_matched = matched
-else:
-    filtered_matched = matched[
-        matched["caliper_used"].isin(selected_values)
-    ]
-
-
-# -----------------------------------
-# 📘 PRECISION DESCRIPTION WITH COUNTS
-# -----------------------------------
-st.markdown("### 📘 Precision Levels Description")
-
-# Calculate counts per caliper
-caliper_counts = matched["caliper_used"].value_counts().to_dict()
-
-for key, val in CALIPER_DESC.items():
-    count = caliper_counts.get(key, 0)
-    st.markdown(f"**{key}** — {val}  _(Matches: {count})_")
-
-
-# -----------------------------------
-# SHOW SELECTED
-# -----------------------------------
-if "ALL" in selected_values or len(selected_values) == 0:
-    st.caption("Showing all calipers combined")
-else:
-    st.caption(f"Selected: {', '.join(selected_values)}")
-
-
-# -----------------------------------
-# MATCH SUMMARY
-# -----------------------------------
-colA, colB, colC = st.columns(3)
-
-colA.metric("Total Matches", len(filtered_matched))
-colB.metric("Group1 Members", filtered_matched["G1_MEMBER_ID"].nunique())
-colC.metric("Group2 Members", filtered_matched["G2_MEMBER_ID"].nunique())
-
-
-# -----------------------------------
-# LOAD MATCHED DATA
-# -----------------------------------
-g1_data, g2_data, _ = load_matched_datasets(df, filtered_matched)
-combined = pd.concat([g1_data, g2_data])
-
-
-# -----------------------------------
-# FILTERS
-# -----------------------------------
-filters = render_filter_ui(combined)
-filtered = apply_filters_cached(combined, filters)
-
-
-# -----------------------------------
-# KPI CALCULATION
-# -----------------------------------
-def compute_kpis(df):
-    members = df["MEMBER_ID"].nunique()
-    total = df["PAID"].sum()
-
-    return {
-        "Members": members,
-        "Total Cost": total,
-        "Medical Cost": df["MEDICAL_PAID"].sum(),
-        "Pharmacy Cost": df["RX_PAID"].sum(),
-        "ED Visits": df["EDVISITS"].sum(),
-        "IP Visits": df["IPVISITS"].sum(),
-        "PMPM": total / members if members else 0
-    }
-
-
-k1 = compute_kpis(filtered[filtered["GROUP"] == "Group1"])
-k2 = compute_kpis(filtered[filtered["GROUP"] == "Group2"])
-
-
-# -----------------------------------
-# KPI DISPLAY
-# -----------------------------------
-st.markdown("## 📊 Key Metrics Overview")
-
-
-def render_kpis(title, kpis1, kpis2):
-
-    st.markdown(f"### {title}")
-    cols = st.columns(4)
-
-    for i, key in enumerate(kpis1.keys()):
-
-        v1 = kpis1[key]
-        v2 = kpis2[key]
-        pct = ((v1 - v2) / v2 * 100) if v2 else 0
-
-        if "Cost" in key or key == "PMPM":
-            value = f"${v1:,.0f}"
-        else:
-            value = f"{int(v1):,}"
-
-        cols[i % 4].metric(
-            key,
-            value,
-            f"{pct:+.1f}%"
-        )
-
-
-render_kpis("Group1", k1, k2)
-st.markdown("---")
-render_kpis("Group2", k2, k1)
-
-
-# -----------------------------------
-# ANALYSIS
-# -----------------------------------
-st.markdown("## 📈 Analysis")
-
-selected_prompt = st.selectbox("Select Analysis", PROMPTS)
-
-
-# -----------------------------------
-# CHART
-# -----------------------------------
-result = run_prompt(selected_prompt, filtered)
-
-fig = build_chart(result, selected_prompt)
-st.plotly_chart(fig, use_container_width=True)
-
-
-# -----------------------------------
-# INSIGHTS
-# -----------------------------------
-st.markdown("## 🧠 Insights")
-
-for ins in generate_insights(selected_prompt, result):
-    st.write("•", ins)
-
-
-# -----------------------------------
-# DATA TABLE
-# -----------------------------------
-st.markdown("## 📄 Data Sample")
-
-display_df = result.copy()
-
-for col in display_df.columns:
-    if display_df[col].dtype in ["int64", "float64"] and col != "MONTH":
-        display_df[col] = display_df[col].apply(
-            lambda x: f"${x:,.0f}" if pd.notnull(x) else x
-        )
-
-st.dataframe(display_df.head(50))
+DATA CLAIMS_DATA_GROUP1_MED;
+SET CLAIMS_DATA_GROUP1_MED;
+FORMAT SVC_CAT2 $200.;
+IF MR_LINE_DESC1="FIP" AND UPCASE(SVC_CAT) IN ("ALCOHOL AND DRUG ABUSE-HOSPITAL" , "ALCOHOL AND DRUG ABUSE-RESIDENTIAL")
+                        THEN SVC_CAT2 = "Alcohol and Drug Abuse";
+ELSE IF MR_LINE_DESC1="FIP" AND UPCASE(SVC_CAT) IN ("MAT NORM DELIVERY" , "MAT NORM DELIVERY-MOM\BABY CMBND")
+                        THEN SVC_CAT2="Mat Norm Delivery";
+ELSE IF MR_LINE_DESC1="FIP" AND UPCASE(SVC_CAT) IN ("MAT CSECT DELIVERY" , "MAT CSECT DELIVERY-MOM\BABY CMBND")
+                        THEN SVC_CAT2="Mat Csect Delivery";
+ELSE IF MR_LINE_DESC1="FIP" AND UPCASE(SVC_CAT) IN ("PSYCHIATRIC-HOSPITAL" , "PSYCHIATRIC-RESIDENTIAL")
+                        THEN SVC_CAT2="Psychiatric";
+ELSE IF MR_LINE_DESC1="FIP" AND UPCASE(SVC_CAT) IN ("WELL NEWBORN-CSECT DELIVERY" , "WELL NEWBORN-UNKNOWN DELIVERY")
+                        THEN SVC_CAT2="Well Newborn";
+
+ELSE IF MR_LINE_DESC1="FOP" AND UPCASE(SVC_CAT) IN ("RADIOLOGY GENERAL-DIAGNOSTIC" , "RADIOLOGY GENERAL-THERAPEUTIC")
+                        THEN SVC_CAT2="Radiology General";
+ELSE IF MR_LINE_DESC1="FOP" AND UPCASE(SVC_CAT) IN ("RADIOLOGY - CT/MRI/PET-CT SCAN" , "RADIOLOGY - CT/MRI/PET-MRI" , "RADIOLOGY - CT/MRI/PET-PET")
+                        THEN SVC_CAT2="Radiology - CT/MRI/PET";
+ELSE IF MR_LINE_DESC1="FOP" AND UPCASE(SVC_CAT) IN ("ALCOHOL & DRUG ABUSE-INTENSIVE OUTPATIENT" , "ALCOHOL & DRUG ABUSE-PARTIAL HOSPITALIZATION")
+                        THEN SVC_CAT2="Alcohol & Drug Abuse";
+ELSE IF MR_LINE_DESC1="FOP" AND UPCASE(SVC_CAT) IN ("PSYCHIATRIC-INTENSIVE OUTPATIENT" , "PSYCHIATRIC-PARTIAL HOSPITALIZATION")
+                        THEN SVC_CAT2="Psychiatric";
+ELSE IF MR_LINE_DESC1="FOP" AND UPCASE(SVC_CAT) IN ("PREVENTIVE-COLONOSCOPY" , "PREVENTIVE-GENERAL" , "PREVENTIVE-LAB" , "PREVENTIVE-MAMMOGRAPHY")
+                        THEN SVC_CAT2="Preventive";
+ELSE IF MR_LINE_DESC1="FOP" AND UPCASE(SVC_CAT) IN ("OTHER-BLOOD" , "OTHER-CLINIC" , "OTHER-DME/SUPPLIES" , "OTHER-DIAGNOSTIC" , "OTHER-DIALYSIS" , "OTHER-GENERAL" , "OTHER-PULMONARY" , "OTHER-TRTMT/SPCLTYSVCS")
+                        THEN SVC_CAT2="Other";
+
+ELSE IF MR_LINE_DESC1="PROF" AND UPCASE(SVC_CAT) IN ("INPATIENT VISITS-ALCOHOL AND DRUG ABUSE" , "INPATIENT VISITS-MEDICAL" , "INPATIENT VISITS-PSYCHIATRIC")
+                         THEN SVC_CAT2="Inpatient Visits";
+ELSE IF MR_LINE_DESC1="PROF" AND UPCASE(SVC_CAT) IN ("MATERNITY-ANCILLARY" , "MATERNITY-ANESTHESIA" , "MATERNITY-CESAREAN DELIVERIES" , "MATERNITY-NON-DELIVERIES" , "MATERNITY-NORMAL DELIVERIES")
+                         THEN SVC_CAT2="Maternity";
+ELSE IF MR_LINE_DESC1="PROF" AND UPCASE(SVC_CAT) IN ("OFFICE/HOME VISITS-PCP" , "OFFICE/HOME VISITS-SPECIALIST")
+                         THEN SVC_CAT2="Office/Home Visits";
+ELSE IF MR_LINE_DESC1="PROF" AND UPCASE(SVC_CAT) IN ("ER VISITS AND OBSERVATION CARE-ER VISITS" , "ER VISITS AND OBSERVATION CARE-OBSERVATION CARE")
+                         THEN SVC_CAT2="ER Visits and Observation Care";
+ELSE IF MR_LINE_DESC1="PROF" AND UPCASE(SVC_CAT) IN ("PREVENTIVE OTHER-COLONOSCOPY" , "PREVENTIVE OTHER-GENERAL" , "PREVENTIVE OTHER-LAB" , "PREVENTIVE OTHER-MAMMOGRAPHY")
+                         THEN SVC_CAT2="Preventive Other";
+ELSE IF MR_LINE_DESC1="PROF" AND UPCASE(SVC_CAT) IN ("RADIOLOGY IP-CT SCAN" , "RADIOLOGY IP-MRI" , "RADIOLOGY IP-PET")
+                         THEN SVC_CAT2="Radiology IP";
+ELSE IF MR_LINE_DESC1="PROF" AND UPCASE(SVC_CAT) IN ("RADIOLOGY IP - GENERAL-DIAGNOSTIC" , "RADIOLOGY IP - GENERAL-THERAPEUTIC")
+                         THEN SVC_CAT2="Radiology IP - General";
+ELSE IF MR_LINE_DESC1="PROF" AND UPCASE(SVC_CAT) IN ("RADIOLOGY OFFICE - CT/MRI/PET-CT SCAN" , "RADIOLOGY OFFICE - CT/MRI/PET-CT SCAN - RADIOLOGY CENTER" , "RADIOLOGY OFFICE - CT/MRI/PET-MRI" , "RADIOLOGY OFFICE - CT/MRI/PET-MRI - RADIOLOGY CENTER" , "RADIOLOGY OFFICE - CT/MRI/PET-PET" , "RADIOLOGY OFFICE - CT/MRI/PET-PET - RADIOLOGY CENTER")
+                         THEN SVC_CAT2="Radiology Office - CT/MRI/PET";
+ELSE IF MR_LINE_DESC1="PROF" AND UPCASE(SVC_CAT) IN ("RADIOLOGY OFFICE - GENERAL-DIAGNOSTIC" , "RADIOLOGY OFFICE - GENERAL-RADIOLOGY CENTER - DIAGNOSTIC" , "RADIOLOGY OFFICE - GENERAL-RADIOLOGY CENTER - THERAPEUTIC" , "RADIOLOGY OFFICE - GENERAL-THERAPEUTIC")
+                         THEN SVC_CAT2="Radiology Office - General";
+
+
+ELSE IF MR_LINE_DESC1="PROF" AND UPCASE(SVC_CAT) IN ("RADIOLOGY OP - GENERAL-DIAGNOSTIC" , "RADIOLOGY OP - GENERAL-THERAPEUTIC")
+                         THEN SVC_CAT2="Radiology OP - General";
+ELSE IF MR_LINE_DESC1="PROF" AND UPCASE(SVC_CAT) IN ("RADIOLOGY OP- CT/MRI/PET-CT SCAN" , "RADIOLOGY OP- CT/MRI/PET-MRI" , "RADIOLOGY OP- CT/MRI/PET-PET")
+                         THEN SVC_CAT2="Radiology OP- CT/MRI/PET";
+ELSE IF MR_LINE_DESC1="PROF" AND UPCASE(SVC_CAT) IN ("PATHOLOGY/LAB - INPATIENT & OUTPATIENT-INPATIENT" , "PATHOLOGY/LAB - INPATIENT & OUTPATIENT-OUTPATIENT")
+                         THEN SVC_CAT2="Pathology/Lab - Inpatient & Outpatient";
+ELSE IF MR_LINE_DESC1="PROF" AND UPCASE(SVC_CAT) IN ("PATHOLOGY/LAB - OFFICE-GENERAL" , "PATHOLOGY/LAB - OFFICE-INDEPENDENT LAB" , "PATHOLOGY/LAB - OFFICE-VENIPUNCTURE")
+                         THEN SVC_CAT2="Pathology/Lab - Office";
+ELSE IF MR_LINE_DESC1="PROF" AND UPCASE(SVC_CAT) IN ("MISCELLANEOUS MEDICAL-CENTRAL NERVOUS SYSTEM TESTS" , "MISCELLANEOUS MEDICAL-DERMATOLOGY" , "MISCELLANEOUS MEDICAL-DIALYSIS" , "MISCELLANEOUS MEDICAL-GASTROENTEROLOGY" , "MISCELLANEOUS MEDICAL-GENERAL" , "MISCELLANEOUS MEDICAL-NEUROLOGY" , "MISCELLANEOUS MEDICAL-NON-INVAS. VASC. DIAG. STUDIES" , "MISCELLANEOUS MEDICAL-OPHTHALMOLOGY"
+                         , "MISCELLANEOUS MEDICAL-OTORHINOLARYNGOLOGY" , "MISCELLANEOUS MEDICAL-PULMONOLOGY" , "MISCELLANEOUS MEDICAL-VESTIBULAR FUNCTION TESTS")
+                         THEN SVC_CAT2="Miscellaneous Medical";
+ELSE IF MR_LINE_DESC1="OTH" AND UPCASE(SVC_CAT) IN ("HOME HEALTH CARE-HH" , "HOME HEALTH CARE-HOSPICE")
+                         THEN SVC_CAT2="Home Health Care";
+ELSE IF MR_LINE_DESC1="ADDL" AND UPCASE(SVC_CAT) IN ("BENEFITS OTHER-ACUPUNCTURE" , "BENEFITS OTHER-DENTAL" , "BENEFITS OTHER-DOCUMENTATION/UNCLASSIFIED" , "BENEFITS OTHER-GENERAL" , "BENEFITS OTHER-HEARING AIDS" , "BENEFITS OTHER-NON-EMERGENCY TRANSPORTATION" , "BENEFITS OTHER-REPRODUCTIVE MEDICINE" , "BENEFITS OTHER-TEMPORARY CODES")
+                         THEN SVC_CAT2="Benefits Other";
+
+/*ELSE IF MR_LINE_DESC1="OTH" AND UPCASE(SVC_CAT) IN ("PRESCRIPTION DRUGS-NON-SPECIALTY GENERIC" , "PRESCRIPTION DRUGS-NON-SPECIALTY MULTI SOURCE BRAND" , "PRESCRIPTION DRUGS-NON-SPECIALTY SINGLE SOURCE BRAND" , "PRESCRIPTION DRUGS-OTC" , "PRESCRIPTION DRUGS-SPECIALTY") */
+/*                         THEN SVC_CAT2="Prescription Drugs";*/
+
+ELSE SVC_CAT2 = SVC_CAT;
+
+RUN;
+
+
+DATA CLAIMS_DATA_GROUP1_MED;
+SET CLAIMS_DATA_GROUP1_MED;
+IF MR_LINE_DESC1 ="OTH" AND	UPCASE(SVC_CAT2)="HOME HEALTH CARE" then MR_LINE_DESC1_FINAL = "PROF";
+ELSE IF MR_LINE_DESC1 ="OTH" AND	UPCASE(SVC_CAT2)="AMBULANCE" then MR_LINE_DESC1_FINAL = "PROF";
+ELSE IF MR_LINE_DESC1 ="OTH" AND	UPCASE(SVC_CAT2)="DME AND SUPPLIES" then MR_LINE_DESC1_FINAL = "PROF";
+ELSE IF MR_LINE_DESC1 ="OTH" AND	UPCASE(SVC_CAT2)="PROSTHETICS" then MR_LINE_DESC1_FINAL = "PROF";
+/*ELSE IF MR_LINE_DESC1 ="OTH" AND	UPCASE(SVC_CAT2)="PRESCRIPTION DRUGS" then MR_LINE_DESC1_FINAL = "PROF";*/
+
+ELSE IF MR_LINE_DESC1 ="ADDL" AND UPCASE(SVC_CAT2) ="BENEFITS OTHER" then MR_LINE_DESC1_FINAL = "PROF";
+ELSE IF MR_LINE_DESC1 ="ADDL" AND UPCASE(SVC_CAT2) ="BENEFITS GLASSES/CONTACTS" then MR_LINE_DESC1_FINAL = "PROF";
+ELSE MR_LINE_DESC1_FINAL=MR_LINE_DESC1;
+RUN;
+
+proc sql;
+create table Summary_Group1 as
+select distinct MR_LINE_DESC1_FINAL, SVC_CAT2,count (distinct CLAIMID) as Total_Claim_Count,
+sum(PAID) as Total_Paid_Amount
+from CLAIMS_DATA_GROUP1_MED
+group by MR_LINE_DESC1, SVC_CAT2;
+quit;
