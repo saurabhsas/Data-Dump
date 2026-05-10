@@ -1,110 +1,16 @@
-# core/summary_pipeline.py
-
-import pandas as pd
-import streamlit as st
-from sqlalchemy import create_engine
-
-
 @st.cache_data(show_spinner=True)
-def run_summary_pipeline(matched_df):
-    """
-    Pull claims data ONLY for matched members from DB,
-    then build summary for Group1 & Group2
-    """
+def run_summary_pipeline():
 
-    # -----------------------------------
-    # 🔹 PREP MATCHED IDS
-    # -----------------------------------
-    matched_df = matched_df.copy()
+    Group1_df = pd.read_csv("data/Group1.csv", dtype=str)
+    Group2_df = pd.read_csv("data/Group2.csv", dtype=str)
 
-    matched_df["G1_MEMBER_ID"] = matched_df["G1_MEMBER_ID"].astype(str)
-    matched_df["G2_MEMBER_ID"] = matched_df["G2_MEMBER_ID"].astype(str)
 
-    g1_ids = matched_df["G1_MEMBER_ID"].unique().tolist()
-    g2_ids = matched_df["G2_MEMBER_ID"].unique().tolist()
+    member_ids_g1 = tuple(Group1_df["G1_MEMBER_ID"].unique())
+    member_ids_g2 = tuple(Group1_df["G2_MEMBER_ID"].unique())
 
-    all_ids = list(set(g1_ids + g2_ids))
+    # ----------------------------------------------------------------
+    # Processing for Group1
+    # ---------------------------------------------------------------- 
 
-    # Convert to SQL-friendly string
-    id_string = ",".join([f"'{x}'" for x in all_ids])
-
-    # -----------------------------------
-    # 🔹 DB CONNECTION (UPDATE THIS)
-    # -----------------------------------
-    engine = create_engine("YOUR_CONNECTION_STRING_HERE")
-
-    # -----------------------------------
-    # 🔥 PLACE YOUR SQL HERE
-    # -----------------------------------
-    query = f"""
-        SELECT
-            MEMBER_ID,
-            CLAIM_ID,
-            PAID,
-            MR_LINE_DESC1,
-            MR_LINE_DESC2,
-            MR_LINE_DESC3
-        FROM YOUR_CLAIMS_TABLE
-        WHERE MEMBER_ID IN ({id_string})
-    """
-
-    df = pd.read_sql(query, engine)
-
-    df["MEMBER_ID"] = df["MEMBER_ID"].astype(str)
-
-    # -----------------------------------
-    # 🔹 SPLIT INTO GROUPS
-    # -----------------------------------
-    g1_df = df[df["MEMBER_ID"].isin(g1_ids)].copy()
-    g2_df = df[df["MEMBER_ID"].isin(g2_ids)].copy()
-
-    # -----------------------------------
-    # 🔹 CATEGORY MAPPING
-    # -----------------------------------
-    def map_category(x):
-        x = str(x).upper()
-
-        if "INPATIENT" in x or "FIP" in x:
-            return "FIP"
-        elif "OUTPATIENT" in x or "FOP" in x:
-            return "FOP"
-        elif "PROF" in x:
-            return "PROF"
-        elif "OTH" in x:
-            return "OTH"
-        else:
-            return "ADDL"
-
-    for d in [g1_df, g2_df]:
-        d["MR_LINE_DESC1_FINAL"] = d["MR_LINE_DESC1"].apply(map_category)
-
-    # -----------------------------------
-    # 🔹 SUBCATEGORY
-    # -----------------------------------
-    for d in [g1_df, g2_df]:
-        d["SVC_CAT2"] = (
-            d["MR_LINE_DESC2"].astype(str) + " - " +
-            d["MR_LINE_DESC3"].astype(str)
-        )
-
-    # -----------------------------------
-    # 🔹 AGGREGATION
-    # -----------------------------------
-    def aggregate(d):
-
-        return (
-            d.groupby(["MR_LINE_DESC1_FINAL", "SVC_CAT2"])
-            .agg(
-                Total_Paid_Amount=("PAID", "sum"),
-                Total_Claim_Count=("CLAIM_ID", "nunique")
-            )
-            .reset_index()
-        )
-
-    Summary_Group1 = aggregate(g1_df)
-    Summary_Group2 = aggregate(g2_df)
-
-    Summary_Group1["GROUP"] = "Group1"
-    Summary_Group2["GROUP"] = "Group2"
-
-    return Summary_Group1, Summary_Group2
+    conn = nzpy.connect(
+...............
