@@ -1,374 +1,3 @@
-# core/summary_pipeline.py
-
-import pandas as pd
-import streamlit as st
-import nzpy
-import numpy as np
-
-
-@st.cache_data(show_spinner=True)
-def run_summary_pipeline():
-
-    # -----------------------------------
-    # LOAD MATCHED MEMBERS
-    # -----------------------------------
-    matched_df = pd.read_csv("data/matched_members.csv", dtype=str)
-
-    g1_ids = matched_df["G1_MEMBER_ID"].astype(str).unique().tolist()
-    g2_ids = matched_df["G2_MEMBER_ID"].astype(str).unique().tolist()
-
-    def format_ids(ids):
-        return "(" + ",".join([f"'{x}'" for x in ids]) + ")"
-
-    g1_ids_sql = format_ids(g1_ids)
-    g2_ids_sql = format_ids(g2_ids)
-
-    # ----------------------------------------------------------------
-    # Processing for Group1
-    # ---------------------------------------------------------------- 
-
-    conn = nzpy.connect(
-    user='xxxxxxxx',
-    password='xxxxxxxx',
-    host='npsaas_dev_db',
-    port=5480,
-    database='IRADW_UAT'
-    )
-
-    # SQL query
-    query = f"""
-    SELECT DISTINCT
-                MEMBERID as MEMBER_ID
-                , ACCOUNTID
-                , CLAIMID
-                , FINAL_PAID_CLAIM
-                , MR_LINE_CASE as HCG_SVC_CAT_LINE
-                , MR_LINE as HCG_SVC_CAT
-                , MR_LINE_DESC1
-                , MR_LINE_DESC2
-                , MR_LINE_DESC3
-                , PAID
-                , SVC_STRT_DT
-                , MR_ALLOWED
-    FROM IRADW_UAT.DM_M360.CUDA_CLAIMS MAIN
-    WHERE MAIN.SVC_STRT_DT BETWEEN '20250101' AND '20251231'
-    AND CLAIM_STATUS = 'FINAL'
-    AND FINAL_PAID_CLAIM = 'Y'
-    AND MEMBERID IN {g1_ids_sql}
-    """
-
-    # Load into DataFrame
-    CLAIMS_DATA_GROUP1_MED = pd.read_sql(query, conn)
-
-    # Optional: close connection
-    conn.close()
-
-
-    conn = nzpy.connect(
-    user='xxxxxxxx',
-    password='xxxxxxxx',
-    host='npsaas_dev_db',
-    port=5480,
-    database='IRADW_UAT'
-    )
-
-    # SQL query
-    query = f"""
-    SELECT DISTINCT
-                MEMBERID as MEMBER_ID
-                , ACCOUNTID
-                , CLAIMID
-                , FINAL_PAID_CLAIM
-                , MR_LINE_CASE as HCG_SVC_CAT_LINE
-                , MR_LINE as HCG_SVC_CAT
-                , MR_LINE_DESC1
-                , MR_LINE_DESC2
-                , MR_LINE_DESC3
-                , PAID
-                , SVC_STRT_DT
-                , MR_ALLOWED
-    FROM IRADW_UAT.DM_M360.CUDA_RX MAIN
-    WHERE MAIN.SVC_STRT_DT BETWEEN '20250101' AND '20251231'
-    AND CLAIM_STATUS = 'FINAL'
-    AND FINAL_PAID_CLAIM = 'Y'
-    AND MEMBERID IN {g1_ids_sql}
-    """
-
-    # Load into DataFrame
-    CLAIMS_DATA_GROUP1_RX = pd.read_sql(query, conn)
-
-    # Optional: close connection
-    conn.close()
-
-    CLAIMS_DATA_GROUP1 = pd.concat([CLAIMS_DATA_GROUP1_MED, CLAIMS_DATA_GROUP1_RX], ignore_index=True)
-
-    CLAIMS_DATA_GROUP1["PAID"] = pd.to_numeric(CLAIMS_DATA_GROUP1["PAID"], errors="coerce")
-    CLAIMS_DATA_GROUP1["MR_ALLOWED"] = pd.to_numeric(CLAIMS_DATA_GROUP1["MR_ALLOWED"], errors="coerce")
-    CLAIMS_DATA_GROUP1["SVC_STRT_DT"] = pd.to_datetime(CLAIMS_DATA_GROUP1["SVC_STRT_DT"]).dt.normalize()
-
-    CLAIMS_DATA_GROUP1["SVC_CAT"] = CLAIMS_DATA_GROUP1[["MR_LINE_DESC2", "MR_LINE_DESC3"]].apply(
-        lambda x: '-'.join(x.dropna(). astype(str)), axis=1)
-
-
-
-    svc_upper = CLAIMS_DATA_GROUP1["SVC_CAT"].str.upper()
-    mr = CLAIMS_DATA_GROUP1["MR_LINE_DESC1"]
-
-    conditions = [
-        # FIP
-        (mr == "FIP") & (svc_upper.isin(["ALCOHOL AND DRUG ABUSE-HOSPITAL", "ALCOHOL AND DRUG ABUSE-RESIDENTIAL"])),
-        (mr == "FIP") & (svc_upper.isin(["MAT NORM DELIVERY", "MAT NORM DELIVERY-MOM\\BABY CMBND"])),
-        (mr == "FIP") & (svc_upper.isin(["MAT CSECT DELIVERY", "MAT CSECT DELIVERY-MOM\\BABY CMBND"])),
-        (mr == "FIP") & (svc_upper.isin(["PSYCHIATRIC-HOSPITAL", "PSYCHIATRIC-RESIDENTIAL"])),
-        (mr == "FIP") & (svc_upper.isin(["WELL NEWBORN-CSECT DELIVERY", "WELL NEWBORN-UNKNOWN DELIVERY"])),
-
-        # FOP
-        (mr == "FOP") & (svc_upper.isin(["RADIOLOGY GENERAL-DIAGNOSTIC", "RADIOLOGY GENERAL-THERAPEUTIC"])),
-        (mr == "FOP") & (svc_upper.isin(["RADIOLOGY - CT/MRI/PET-CT SCAN", "RADIOLOGY - CT/MRI/PET-MRI", "RADIOLOGY - CT/MRI/PET-PET"])),
-        (mr == "FOP") & (svc_upper.isin(["ALCOHOL & DRUG ABUSE-INTENSIVE OUTPATIENT", "ALCOHOL & DRUG ABUSE-PARTIAL HOSPITALIZATION"])),
-        (mr == "FOP") & (svc_upper.isin(["PSYCHIATRIC-INTENSIVE OUTPATIENT", "PSYCHIATRIC-PARTIAL HOSPITALIZATION"])),
-        (mr == "FOP") & (svc_upper.isin(["PREVENTIVE-COLONOSCOPY", "PREVENTIVE-GENERAL", "PREVENTIVE-LAB", "PREVENTIVE-MAMMOGRAPHY"])),
-        (mr == "FOP") & (svc_upper.isin(["OTHER-BLOOD", "OTHER-CLINIC", "OTHER-DME/SUPPLIES", "OTHER-DIAGNOSTIC",
-                                        "OTHER-DIALYSIS", "OTHER-GENERAL", "OTHER-PULMONARY", "OTHER-TRTMT/SPCLTYSVCS"])),
-
-        # PROF (sample subset shown; pattern continues same way)
-        (mr == "PROF") & (svc_upper.isin(["INPATIENT VISITS-ALCOHOL AND DRUG ABUSE", "INPATIENT VISITS-MEDICAL", "INPATIENT VISITS-PSYCHIATRIC"])),
-        (mr == "PROF") & (svc_upper.isin(["MATERNITY-ANCILLARY", "MATERNITY-ANESTHESIA", "MATERNITY-CESAREAN DELIVERIES",
-                                        "MATERNITY-NON-DELIVERIES", "MATERNITY-NORMAL DELIVERIES"])),
-
-        # OTH
-        (mr == "OTH") & (svc_upper.isin(["HOME HEALTH CARE-HH", "HOME HEALTH CARE-HOSPICE"])),
-
-        # ADDL
-        (mr == "ADDL") & (svc_upper.isin(["BENEFITS OTHER-ACUPUNCTURE", "BENEFITS OTHER-DENTAL",
-                                        "BENEFITS OTHER-DOCUMENTATION/UNCLASSIFIED", "BENEFITS OTHER-GENERAL",
-                                        "BENEFITS OTHER-HEARING AIDS", "BENEFITS OTHER-NON-EMERGENCY TRANSPORTATION",
-                                        "BENEFITS OTHER-REPRODUCTIVE MEDICINE", "BENEFITS OTHER-TEMPORARY CODES"]))
-    ]
-
-    choices = [
-        "Alcohol and Drug Abuse",
-        "Mat Norm Delivery",
-        "Mat Csect Delivery",
-        "Psychiatric",
-        "Well Newborn",
-        "Radiology General",
-        "Radiology - CT/MRI/PET",
-        "Alcohol & Drug Abuse",
-        "Psychiatric",
-        "Preventive",
-        "Other",
-        "Inpatient Visits",
-        "Maternity",
-        "Home Health Care",
-        "Benefits Other"
-    ]
-
-    CLAIMS_DATA_GROUP1["SVC_CAT2"] = np.select(conditions, choices, default=CLAIMS_DATA_GROUP1["SVC_CAT"])
-
-
-
-    svc2_upper = CLAIMS_DATA_GROUP1["SVC_CAT2"].str.upper()
-    mr = CLAIMS_DATA_GROUP1["MR_LINE_DESC1"]
-
-    conditions2 = [
-        (mr == "OTH") & (svc2_upper.isin(["HOME HEALTH CARE", "AMBULANCE", "DME AND SUPPLIES", "PROSTHETICS"])),
-        (mr == "ADDL") & (svc2_upper.isin(["BENEFITS OTHER", "BENEFITS GLASSES/CONTACTS"]))
-    ]
-
-    choices2 = [
-        "PROF",
-        "PROF"
-    ]
-    CLAIMS_DATA_GROUP1["MR_LINE_DESC1_FINAL"] = np.select(conditions2, choices2, default=CLAIMS_DATA_GROUP1["MR_LINE_DESC1"])
-
-
-    Summary_Group1 = (
-        CLAIMS_DATA_GROUP1.groupby(["MR_LINE_DESC1_FINAL", "SVC_CAT2"])
-        .agg(
-            Total_Claim_Count=("CLAIMID", "nunique"),
-            Total_Paid_Amount=("PAID", "sum")
-        )
-        .reset_index()
-    )
-
-
-    # ----------------------------------------------------------------
-    # Processing for Group2
-    # ---------------------------------------------------------------- 
-
-    # ----------------------------------------------------------------
-    # Processing for Group2
-    # ---------------------------------------------------------------- 
-
-    conn = nzpy.connect(
-    user='xxxxxxxx',
-    password='xxxxxxxx',
-    host='npsaas_dev_db',
-    port=5480,
-    database='IRADW_UAT'
-    )
-
-    # SQL query
-    query = f"""
-    SELECT DISTINCT
-                MEMBERID as MEMBER_ID
-                , ACCOUNTID
-                , CLAIMID
-                , FINAL_PAID_CLAIM
-                , MR_LINE_CASE as HCG_SVC_CAT_LINE
-                , MR_LINE as HCG_SVC_CAT
-                , MR_LINE_DESC1
-                , MR_LINE_DESC2
-                , MR_LINE_DESC3
-                , PAID
-                , SVC_STRT_DT
-                , MR_ALLOWED
-    FROM IRADW_UAT.DM_M360.CUDA_CLAIMS MAIN
-    WHERE MAIN.SVC_STRT_DT BETWEEN '20250101' AND '20251231'
-    AND CLAIM_STATUS = 'FINAL'
-    AND FINAL_PAID_CLAIM = 'Y'
-    AND MEMBERID IN {g2_ids_sql}
-    """
-
-    # Load into DataFrame
-    CLAIMS_DATA_Group2_MED = pd.read_sql(query, conn)
-
-    # Optional: close connection
-    conn.close()
-
-
-    conn = nzpy.connect(
-    user='xxxxxxxx',
-    password='xxxxxxxx',
-    host='npsaas_dev_db',
-    port=5480,
-    database='IRADW_UAT'
-    )
-
-    # SQL query
-    query = f"""
-    SELECT DISTINCT
-                MEMBERID as MEMBER_ID
-                , ACCOUNTID
-                , CLAIMID
-                , FINAL_PAID_CLAIM
-                , MR_LINE_CASE as HCG_SVC_CAT_LINE
-                , MR_LINE as HCG_SVC_CAT
-                , MR_LINE_DESC1
-                , MR_LINE_DESC2
-                , MR_LINE_DESC3
-                , PAID
-                , SVC_STRT_DT
-                , MR_ALLOWED
-    FROM IRADW_UAT.DM_M360.CUDA_RX MAIN
-    WHERE MAIN.SVC_STRT_DT BETWEEN '20250101' AND '20251231'
-    AND CLAIM_STATUS = 'FINAL'
-    AND FINAL_PAID_CLAIM = 'Y'
-    AND MEMBERID IN {g2_ids_sql}
-    """
-
-    # Load into DataFrame
-    CLAIMS_DATA_Group2_RX = pd.read_sql(query, conn)
-
-    # Optional: close connection
-    conn.close()
-
-    CLAIMS_DATA_Group2 = pd.concat([CLAIMS_DATA_Group2_MED, CLAIMS_DATA_Group2_RX], ignore_index=True)
-
-    CLAIMS_DATA_Group2["PAID"] = pd.to_numeric(CLAIMS_DATA_Group2["PAID"], errors="coerce")
-    CLAIMS_DATA_Group2["MR_ALLOWED"] = pd.to_numeric(CLAIMS_DATA_Group2["MR_ALLOWED"], errors="coerce")
-    CLAIMS_DATA_Group2["SVC_STRT_DT"] = pd.to_datetime(CLAIMS_DATA_Group2["SVC_STRT_DT"]).dt.normalize()
-
-    CLAIMS_DATA_Group2["SVC_CAT"] = CLAIMS_DATA_Group2[["MR_LINE_DESC2", "MR_LINE_DESC3"]].apply(
-        lambda x: '-'.join(x.dropna(). astype(str)), axis=1)
-
-
-
-    svc_upper = CLAIMS_DATA_Group2["SVC_CAT"].str.upper()
-    mr = CLAIMS_DATA_Group2["MR_LINE_DESC1"]
-
-    conditions = [
-        # FIP
-        (mr == "FIP") & (svc_upper.isin(["ALCOHOL AND DRUG ABUSE-HOSPITAL", "ALCOHOL AND DRUG ABUSE-RESIDENTIAL"])),
-        (mr == "FIP") & (svc_upper.isin(["MAT NORM DELIVERY", "MAT NORM DELIVERY-MOM\\BABY CMBND"])),
-        (mr == "FIP") & (svc_upper.isin(["MAT CSECT DELIVERY", "MAT CSECT DELIVERY-MOM\\BABY CMBND"])),
-        (mr == "FIP") & (svc_upper.isin(["PSYCHIATRIC-HOSPITAL", "PSYCHIATRIC-RESIDENTIAL"])),
-        (mr == "FIP") & (svc_upper.isin(["WELL NEWBORN-CSECT DELIVERY", "WELL NEWBORN-UNKNOWN DELIVERY"])),
-
-        # FOP
-        (mr == "FOP") & (svc_upper.isin(["RADIOLOGY GENERAL-DIAGNOSTIC", "RADIOLOGY GENERAL-THERAPEUTIC"])),
-        (mr == "FOP") & (svc_upper.isin(["RADIOLOGY - CT/MRI/PET-CT SCAN", "RADIOLOGY - CT/MRI/PET-MRI", "RADIOLOGY - CT/MRI/PET-PET"])),
-        (mr == "FOP") & (svc_upper.isin(["ALCOHOL & DRUG ABUSE-INTENSIVE OUTPATIENT", "ALCOHOL & DRUG ABUSE-PARTIAL HOSPITALIZATION"])),
-        (mr == "FOP") & (svc_upper.isin(["PSYCHIATRIC-INTENSIVE OUTPATIENT", "PSYCHIATRIC-PARTIAL HOSPITALIZATION"])),
-        (mr == "FOP") & (svc_upper.isin(["PREVENTIVE-COLONOSCOPY", "PREVENTIVE-GENERAL", "PREVENTIVE-LAB", "PREVENTIVE-MAMMOGRAPHY"])),
-        (mr == "FOP") & (svc_upper.isin(["OTHER-BLOOD", "OTHER-CLINIC", "OTHER-DME/SUPPLIES", "OTHER-DIAGNOSTIC",
-                                        "OTHER-DIALYSIS", "OTHER-GENERAL", "OTHER-PULMONARY", "OTHER-TRTMT/SPCLTYSVCS"])),
-
-        # PROF (sample subset shown; pattern continues same way)
-        (mr == "PROF") & (svc_upper.isin(["INPATIENT VISITS-ALCOHOL AND DRUG ABUSE", "INPATIENT VISITS-MEDICAL", "INPATIENT VISITS-PSYCHIATRIC"])),
-        (mr == "PROF") & (svc_upper.isin(["MATERNITY-ANCILLARY", "MATERNITY-ANESTHESIA", "MATERNITY-CESAREAN DELIVERIES",
-                                        "MATERNITY-NON-DELIVERIES", "MATERNITY-NORMAL DELIVERIES"])),
-
-        # OTH
-        (mr == "OTH") & (svc_upper.isin(["HOME HEALTH CARE-HH", "HOME HEALTH CARE-HOSPICE"])),
-
-        # ADDL
-        (mr == "ADDL") & (svc_upper.isin(["BENEFITS OTHER-ACUPUNCTURE", "BENEFITS OTHER-DENTAL",
-                                        "BENEFITS OTHER-DOCUMENTATION/UNCLASSIFIED", "BENEFITS OTHER-GENERAL",
-                                        "BENEFITS OTHER-HEARING AIDS", "BENEFITS OTHER-NON-EMERGENCY TRANSPORTATION",
-                                        "BENEFITS OTHER-REPRODUCTIVE MEDICINE", "BENEFITS OTHER-TEMPORARY CODES"]))
-    ]
-
-    choices = [
-        "Alcohol and Drug Abuse",
-        "Mat Norm Delivery",
-        "Mat Csect Delivery",
-        "Psychiatric",
-        "Well Newborn",
-        "Radiology General",
-        "Radiology - CT/MRI/PET",
-        "Alcohol & Drug Abuse",
-        "Psychiatric",
-        "Preventive",
-        "Other",
-        "Inpatient Visits",
-        "Maternity",
-        "Home Health Care",
-        "Benefits Other"
-    ]
-
-    CLAIMS_DATA_Group2["SVC_CAT2"] = np.select(conditions, choices, default=CLAIMS_DATA_Group2["SVC_CAT"])
-
-
-
-    svc2_upper = CLAIMS_DATA_Group2["SVC_CAT2"].str.upper()
-    mr = CLAIMS_DATA_Group2["MR_LINE_DESC1"]
-
-    conditions2 = [
-        (mr == "OTH") & (svc2_upper.isin(["HOME HEALTH CARE", "AMBULANCE", "DME AND SUPPLIES", "PROSTHETICS"])),
-        (mr == "ADDL") & (svc2_upper.isin(["BENEFITS OTHER", "BENEFITS GLASSES/CONTACTS"]))
-    ]
-
-    choices2 = [
-        "PROF",
-        "PROF"
-    ]
-    CLAIMS_DATA_Group2["MR_LINE_DESC1_FINAL"] = np.select(conditions2, choices2, default=CLAIMS_DATA_Group2["MR_LINE_DESC1"])
-
-
-    Summary_Group2 = (
-        CLAIMS_DATA_Group2.groupby(["MR_LINE_DESC1_FINAL", "SVC_CAT2"])
-        .agg(
-            Total_Claim_Count=("CLAIMID", "nunique"),
-            Total_Paid_Amount=("PAID", "sum")
-        )
-        .reset_index()
-    )
-
-
-
-# app.py
 import streamlit as st
 import pandas as pd
 import plotly.express as px
@@ -393,11 +22,11 @@ from utils.constants import PROMPTS
 # PAGE CONFIG
 # -----------------------------------
 st.set_page_config(layout="wide")
-st.title("Matched Cohort Analytics Dashboard")
+st.title("🏥 Matched Cohort Analytics Dashboard")
 
 
 # -----------------------------------
-# KPI FONT SIZE (REDUCED)
+# KPI FONT SIZE
 # -----------------------------------
 st.markdown("""
 <style>
@@ -419,7 +48,7 @@ page = st.sidebar.radio(
 
 
 # ============================================================
-# 📊 PAGE 1: MATCHED COHORT DASHBOARD
+# 📊 PAGE 1: DASHBOARD
 # ============================================================
 if page == "📊 Matched Cohort Dashboard":
 
@@ -428,91 +57,45 @@ if page == "📊 Matched Cohort Dashboard":
         g1, g2 = load_group_match_data()
         matched = multi_caliper_matching(g1, g2)
 
-        # 🔥 ONLY CHANGE: SAVE MATCHED FILE
+        # Save matched members
         os.makedirs("data", exist_ok=True)
         matched[["G1_MEMBER_ID", "G2_MEMBER_ID"]].to_csv(
             "data/matched_members.csv",
             index=False
         )
-
         return matched
 
     df = load_data()
     matched = get_matched()
 
     # -----------------------------------
-    # MATCHING QUALITY
-    # -----------------------------------
-    st.markdown("## 🎛 Matching Quality")
-
-    caliper_counts = matched["caliper_used"].value_counts().to_dict()
-
-    CALIPER_DESC = {
-        "1e-05": f"Very Strict (5 decimal precision match) — Matches: {caliper_counts.get('1e-05',0)}",
-        "0.0001": f"Strict (4 decimal precision) — Matches: {caliper_counts.get('0.0001',0)}",
-        "0.001": f"Moderate (3 decimal precision) — Matches: {caliper_counts.get('0.001',0)}",
-        "0.02": f"Loose match (broader similarity) — Matches: {caliper_counts.get('0.02',0)}",
-        "no_caliper": f"Fallback match (ensures full coverage) — Matches: {caliper_counts.get('no_caliper',0)}"
-    }
-
-    available_calipers = ["ALL"] + sorted(matched["caliper_used"].unique())
-
-    if "selected_calipers" not in st.session_state:
-        st.session_state.selected_calipers = ["ALL"]
-
-    with st.form("caliper_form"):
-        selected = st.multiselect(
-            "Select Matching Precision Levels",
-            options=available_calipers,
-            default=st.session_state.selected_calipers,
-            format_func=lambda x: "ALL" if x == "ALL" else f"{x} → {CALIPER_DESC.get(x,'')}"
-        )
-        apply_btn = st.form_submit_button("Apply")
-
-        if apply_btn:
-            st.session_state.selected_calipers = selected
-
-    selected_values = st.session_state.selected_calipers
-
-    if "ALL" in selected_values or len(selected_values) == 0:
-        filtered_matched = matched
-    else:
-        filtered_matched = matched[
-            matched["caliper_used"].isin(selected_values)
-        ]
-
-    # Precision descriptions
-    st.markdown("### 📘 Precision Levels Description")
-    for k, v in CALIPER_DESC.items():
-        st.markdown(f"**{k}** — {v}")
-
-    # -----------------------------------
     # MATCH SUMMARY
     # -----------------------------------
     colA, colB, colC = st.columns(3)
 
-    colA.metric("Total Matches", len(filtered_matched))
-    colB.metric("Group1 Members", filtered_matched["G1_MEMBER_ID"].nunique())
-    colC.metric("Group2 Members", filtered_matched["G2_MEMBER_ID"].nunique())
+    colA.metric("Total Matches", len(matched))
+    colB.metric("Group1 Members", matched["G1_MEMBER_ID"].nunique())
+    colC.metric("Group2 Members", matched["G2_MEMBER_ID"].nunique())
 
     # -----------------------------------
-    # LOAD MATCHED DATA
+    # MATCHED DATA + FILTERS
     # -----------------------------------
-    g1_data, g2_data, _ = load_matched_datasets(df, filtered_matched)
+    g1_data, g2_data, _ = load_matched_datasets(df, matched)
     combined = pd.concat([g1_data, g2_data])
 
     filters = render_filter_ui(combined)
     filtered = apply_filters_cached(combined, filters)
 
     # -----------------------------------
-    # KPI CALCULATION (FIXED)
+    # KPI CALCULATION
     # -----------------------------------
-    def compute_kpis(df, matched_df, group_name):
+    def compute_kpis(df, matched_df, group):
 
-        if group_name == "Group1":
-            members = matched_df["G1_MEMBER_ID"].nunique()
-        else:
-            members = matched_df["G2_MEMBER_ID"].nunique()
+        members = (
+            matched_df["G1_MEMBER_ID"].nunique()
+            if group == "Group1"
+            else matched_df["G2_MEMBER_ID"].nunique()
+        )
 
         total = df["PAID"].sum()
 
@@ -528,18 +111,18 @@ if page == "📊 Matched Cohort Dashboard":
 
     k1 = compute_kpis(
         filtered[filtered["GROUP"] == "Group1"],
-        filtered_matched,
+        matched,
         "Group1"
     )
 
     k2 = compute_kpis(
         filtered[filtered["GROUP"] == "Group2"],
-        filtered_matched,
+        matched,
         "Group2"
     )
 
     # -----------------------------------
-    # KPI DISPLAY (SIDE-BY-SIDE)
+    # KPI DISPLAY
     # -----------------------------------
     st.markdown("## 📊 Key Metrics Overview")
 
@@ -603,14 +186,17 @@ if page == "📊 Matched Cohort Dashboard":
 
 
 # ============================================================
-# 📈 PAGE 2: UTILIZATION & COST
+# 📈 PAGE 2: UTILIZATION & COST COMPARISON (FIXED)
 # ============================================================
 elif page == "📈 Utilization & Cost Comparison":
 
-    st.markdown("📈 Utilization & Cost Comparison")
+    st.header("📈 Utilization & Cost Comparison")
 
     df = load_summary_data()
 
+    # -----------------------------------
+    # AGGREGATION (PIPELINE OUTPUT)
+    # -----------------------------------
     summary = (
         df.groupby(["MR_LINE_DESC1_FINAL", "SVC_CAT2", "GROUP"])
         .agg({
@@ -620,6 +206,9 @@ elif page == "📈 Utilization & Cost Comparison":
         .reset_index()
     )
 
+    # -----------------------------------
+    # PIVOT
+    # -----------------------------------
     pivot = summary.pivot(
         index=["MR_LINE_DESC1_FINAL", "SVC_CAT2"],
         columns="GROUP",
@@ -629,10 +218,13 @@ elif page == "📈 Utilization & Cost Comparison":
     pivot.columns = [f"{m}_{g}" for m, g in pivot.columns]
     pivot = pivot.reset_index()
 
+    # -----------------------------------
+    # DELTA CALCULATION
+    # -----------------------------------
     def pct_diff(a, b):
         return ((a - b) / b * 100) if b != 0 else 0
 
-    pivot["Cost_%_Diff"] = pivot.apply(
+    pivot["Cost Δ%"] = pivot.apply(
         lambda x: pct_diff(
             x.get("Total_Paid_Amount_Group1", 0),
             x.get("Total_Paid_Amount_Group2", 0)
@@ -640,7 +232,7 @@ elif page == "📈 Utilization & Cost Comparison":
         axis=1
     )
 
-    pivot["Util_%_Diff"] = pivot.apply(
+    pivot["Utilization Δ%"] = pivot.apply(
         lambda x: pct_diff(
             x.get("Total_Claim_Count_Group1", 0),
             x.get("Total_Claim_Count_Group2", 0)
@@ -648,30 +240,56 @@ elif page == "📈 Utilization & Cost Comparison":
         axis=1
     )
 
-    def format_df(df):
-        df = df.copy()
+    # -----------------------------------
+    # RENAME
+    # -----------------------------------
+    pivot = pivot.rename(columns={
+        "Total_Paid_Amount_Group1": "G1 Paid",
+        "Total_Paid_Amount_Group2": "G2 Paid",
+        "Total_Claim_Count_Group1": "G1 Claim Count",
+        "Total_Claim_Count_Group2": "G2 Claim Count"
+    })
 
-        for col in df.columns:
-            if "Paid_Amount" in col:
-                df[col] = df[col].apply(lambda x: f"${x:,.0f}")
-            elif "Claim_Count" in col:
-                df[col] = df[col].apply(lambda x: f"{int(x):,}")
-            elif "%_Diff" in col:
-                df[col] = df[col].apply(lambda x: f"{x:+.1f}%")
+    # -----------------------------------
+    # FORMAT
+    # -----------------------------------
+    for col in ["G1 Paid", "G2 Paid"]:
+        pivot[col] = pivot[col].apply(lambda x: f"${x:,.0f}")
 
-        df.columns = [
-            "Category",
-            "Subcategory",
-            "G1 Cost",
-            "G2 Cost",
-            "G1 Utilization",
-            "G2 Utilization",
-            "Cost Δ%",
-            "Utilization Δ%"
-        ]
+    for col in ["G1 Claim Count", "G2 Claim Count"]:
+        pivot[col] = pivot[col].apply(lambda x: f"{int(x):,}")
 
-        return df
+    pivot["Cost Δ%"] = pivot["Cost Δ%"].apply(lambda x: f"{x:+.1f}%")
+    pivot["Utilization Δ%"] = pivot["Utilization Δ%"].apply(lambda x: f"{x:+.1f}%")
 
+    # -----------------------------------
+    # FINAL STRUCTURE
+    # -----------------------------------
+    pivot = pivot[[
+        "MR_LINE_DESC1_FINAL",
+        "SVC_CAT2",
+        "G1 Paid",
+        "G2 Paid",
+        "G1 Claim Count",
+        "G2 Claim Count",
+        "Cost Δ%",
+        "Utilization Δ%"
+    ]]
+
+    pivot.columns = [
+        "Category",
+        "Subcategory",
+        "G1 Paid",
+        "G2 Paid",
+        "G1 Claims",
+        "G2 Claims",
+        "Cost Δ%",
+        "Utilization Δ%"
+    ]
+
+    # -----------------------------------
+    # SEGMENT DISPLAY
+    # -----------------------------------
     segments = {
         "🏥 Inpatient (FIP)": "FIP",
         "🏥 Outpatient (FOP)": "FOP",
@@ -682,9 +300,10 @@ elif page == "📈 Utilization & Cost Comparison":
 
     for title, code in segments.items():
         st.markdown(f"### {title}")
-        seg_df = pivot[pivot["MR_LINE_DESC1_FINAL"] == code]
+
+        seg_df = pivot[pivot["Category"] == code]
 
         if not seg_df.empty:
-            st.dataframe(format_df(seg_df), width='stretch')
+            st.dataframe(seg_df, use_container_width=True)
         else:
             st.info(f"No data available for {title}")
