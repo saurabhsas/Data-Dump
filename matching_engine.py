@@ -26,7 +26,7 @@ st.title("🏥 Matched Cohort Analytics Dashboard")
 
 
 # -----------------------------------
-# KPI FONT SIZE
+# KPI FONT SIZE (REDUCED)
 # -----------------------------------
 st.markdown("""
 <style>
@@ -48,7 +48,7 @@ page = st.sidebar.radio(
 
 
 # ============================================================
-# 📊 PAGE 1
+# 📊 PAGE 1: MATCHED COHORT DASHBOARD
 # ============================================================
 if page == "📊 Matched Cohort Dashboard":
 
@@ -57,7 +57,7 @@ if page == "📊 Matched Cohort Dashboard":
         g1, g2 = load_group_match_data()
         matched = multi_caliper_matching(g1, g2)
 
-        # EXPORT MATCHED FILE
+        # 🔥 ONLY CHANGE: SAVE MATCHED FILE
         os.makedirs("data", exist_ok=True)
         matched[["G1_MEMBER_ID", "G2_MEMBER_ID"]].to_csv(
             "data/matched_members.csv",
@@ -77,28 +77,43 @@ if page == "📊 Matched Cohort Dashboard":
     caliper_counts = matched["caliper_used"].value_counts().to_dict()
 
     CALIPER_DESC = {
-        "1e-05": f"Very Strict (5 decimal precision) — {caliper_counts.get('1e-05',0)}",
-        "0.0001": f"Strict (4 decimal precision) — {caliper_counts.get('0.0001',0)}",
-        "0.001": f"Moderate (3 decimal precision) — {caliper_counts.get('0.001',0)}",
-        "0.02": f"Loose match — {caliper_counts.get('0.02',0)}",
-        "no_caliper": f"Fallback — {caliper_counts.get('no_caliper',0)}"
+        "1e-05": f"Very Strict (5 decimal precision match) — Matches: {caliper_counts.get('1e-05',0)}",
+        "0.0001": f"Strict (4 decimal precision) — Matches: {caliper_counts.get('0.0001',0)}",
+        "0.001": f"Moderate (3 decimal precision) — Matches: {caliper_counts.get('0.001',0)}",
+        "0.02": f"Loose match (broader similarity) — Matches: {caliper_counts.get('0.02',0)}",
+        "no_caliper": f"Fallback match (ensures full coverage) — Matches: {caliper_counts.get('no_caliper',0)}"
     }
 
     available_calipers = ["ALL"] + sorted(matched["caliper_used"].unique())
 
-    selected = st.multiselect(
-        "Select Matching Precision Levels",
-        options=available_calipers,
-        default=["ALL"],
-        format_func=lambda x: "ALL" if x == "ALL" else f"{x} → {CALIPER_DESC.get(x,'')}"
-    )
+    if "selected_calipers" not in st.session_state:
+        st.session_state.selected_calipers = ["ALL"]
 
-    if "ALL" in selected:
+    with st.form("caliper_form"):
+        selected = st.multiselect(
+            "Select Matching Precision Levels",
+            options=available_calipers,
+            default=st.session_state.selected_calipers,
+            format_func=lambda x: "ALL" if x == "ALL" else f"{x} → {CALIPER_DESC.get(x,'')}"
+        )
+        apply_btn = st.form_submit_button("Apply")
+
+        if apply_btn:
+            st.session_state.selected_calipers = selected
+
+    selected_values = st.session_state.selected_calipers
+
+    if "ALL" in selected_values or len(selected_values) == 0:
         filtered_matched = matched
     else:
         filtered_matched = matched[
-            matched["caliper_used"].isin(selected)
+            matched["caliper_used"].isin(selected_values)
         ]
+
+    # Precision descriptions
+    st.markdown("### 📘 Precision Levels Description")
+    for k, v in CALIPER_DESC.items():
+        st.markdown(f"**{k}** — {v}")
 
     # -----------------------------------
     # MATCH SUMMARY
@@ -119,11 +134,11 @@ if page == "📊 Matched Cohort Dashboard":
     filtered = apply_filters_cached(combined, filters)
 
     # -----------------------------------
-    # KPI FIX
+    # KPI CALCULATION (FIXED)
     # -----------------------------------
-    def compute_kpis(df, matched_df, group):
+    def compute_kpis(df, matched_df, group_name):
 
-        if group == "Group1":
+        if group_name == "Group1":
             members = matched_df["G1_MEMBER_ID"].nunique()
         else:
             members = matched_df["G2_MEMBER_ID"].nunique()
@@ -153,7 +168,7 @@ if page == "📊 Matched Cohort Dashboard":
     )
 
     # -----------------------------------
-    # KPI DISPLAY
+    # KPI DISPLAY (SIDE-BY-SIDE)
     # -----------------------------------
     st.markdown("## 📊 Key Metrics Overview")
 
@@ -217,7 +232,7 @@ if page == "📊 Matched Cohort Dashboard":
 
 
 # ============================================================
-# 📈 PAGE 2 (NO TOTALS)
+# 📈 PAGE 2: UTILIZATION & COST
 # ============================================================
 elif page == "📈 Utilization & Cost Comparison":
 
@@ -243,6 +258,49 @@ elif page == "📈 Utilization & Cost Comparison":
     pivot.columns = [f"{m}_{g}" for m, g in pivot.columns]
     pivot = pivot.reset_index()
 
+    def pct_diff(a, b):
+        return ((a - b) / b * 100) if b != 0 else 0
+
+    pivot["Cost_%_Diff"] = pivot.apply(
+        lambda x: pct_diff(
+            x.get("Total_Paid_Amount_Group1", 0),
+            x.get("Total_Paid_Amount_Group2", 0)
+        ),
+        axis=1
+    )
+
+    pivot["Util_%_Diff"] = pivot.apply(
+        lambda x: pct_diff(
+            x.get("Total_Claim_Count_Group1", 0),
+            x.get("Total_Claim_Count_Group2", 0)
+        ),
+        axis=1
+    )
+
+    def format_df(df):
+        df = df.copy()
+
+        for col in df.columns:
+            if "Paid_Amount" in col:
+                df[col] = df[col].apply(lambda x: f"${x:,.0f}")
+            elif "Claim_Count" in col:
+                df[col] = df[col].apply(lambda x: f"{int(x):,}")
+            elif "%_Diff" in col:
+                df[col] = df[col].apply(lambda x: f"{x:+.1f}%")
+
+        df.columns = [
+            "Category",
+            "Subcategory",
+            "G1 Cost",
+            "G2 Cost",
+            "G1 Utilization",
+            "G2 Utilization",
+            "Cost Δ%",
+            "Utilization Δ%"
+        ]
+
+        return df
+
     segments = {
         "🏥 Inpatient (FIP)": "FIP",
         "🏥 Outpatient (FOP)": "FOP",
@@ -253,10 +311,9 @@ elif page == "📈 Utilization & Cost Comparison":
 
     for title, code in segments.items():
         st.markdown(f"## {title}")
-
         seg_df = pivot[pivot["MR_LINE_DESC1_FINAL"] == code]
 
         if not seg_df.empty:
-            st.dataframe(seg_df, use_container_width=True)
+            st.dataframe(format_df(seg_df), use_container_width=True)
         else:
             st.info(f"No data available for {title}")
