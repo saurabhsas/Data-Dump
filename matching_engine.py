@@ -26,7 +26,7 @@ st.title("🏥 Matched Cohort Analytics Dashboard")
 
 
 # -----------------------------------
-# KPI FONT SIZE
+# KPI FONT SIZE (REDUCED)
 # -----------------------------------
 st.markdown("""
 <style>
@@ -48,7 +48,7 @@ page = st.sidebar.radio(
 
 
 # ============================================================
-# 📊 PAGE 1
+# 📊 PAGE 1: MATCHED COHORT DASHBOARD
 # ============================================================
 if page == "📊 Matched Cohort Dashboard":
 
@@ -57,6 +57,7 @@ if page == "📊 Matched Cohort Dashboard":
         g1, g2 = load_group_match_data()
         matched = multi_caliper_matching(g1, g2)
 
+        # 🔥 ONLY CHANGE: SAVE MATCHED FILE
         os.makedirs("data", exist_ok=True)
         matched[["G1_MEMBER_ID", "G2_MEMBER_ID"]].to_csv(
             "data/matched_members.csv",
@@ -69,22 +70,79 @@ if page == "📊 Matched Cohort Dashboard":
     matched = get_matched()
 
     # -----------------------------------
+    # MATCHING QUALITY
+    # -----------------------------------
+    st.markdown("## 🎛 Matching Quality")
+
+    caliper_counts = matched["caliper_used"].value_counts().to_dict()
+
+    CALIPER_DESC = {
+        "1e-05": f"Very Strict (5 decimal precision match) — Matches: {caliper_counts.get('1e-05',0)}",
+        "0.0001": f"Strict (4 decimal precision) — Matches: {caliper_counts.get('0.0001',0)}",
+        "0.001": f"Moderate (3 decimal precision) — Matches: {caliper_counts.get('0.001',0)}",
+        "0.02": f"Loose match (broader similarity) — Matches: {caliper_counts.get('0.02',0)}",
+        "no_caliper": f"Fallback match (ensures full coverage) — Matches: {caliper_counts.get('no_caliper',0)}"
+    }
+
+    available_calipers = ["ALL"] + sorted(matched["caliper_used"].unique())
+
+    if "selected_calipers" not in st.session_state:
+        st.session_state.selected_calipers = ["ALL"]
+
+    with st.form("caliper_form"):
+        selected = st.multiselect(
+            "Select Matching Precision Levels",
+            options=available_calipers,
+            default=st.session_state.selected_calipers,
+            format_func=lambda x: "ALL" if x == "ALL" else f"{x} → {CALIPER_DESC.get(x,'')}"
+        )
+        apply_btn = st.form_submit_button("Apply")
+
+        if apply_btn:
+            st.session_state.selected_calipers = selected
+
+    selected_values = st.session_state.selected_calipers
+
+    if "ALL" in selected_values or len(selected_values) == 0:
+        filtered_matched = matched
+    else:
+        filtered_matched = matched[
+            matched["caliper_used"].isin(selected_values)
+        ]
+
+    # Precision descriptions
+    st.markdown("### 📘 Precision Levels Description")
+    for k, v in CALIPER_DESC.items():
+        st.markdown(f"**{k}** — {v}")
+
+    # -----------------------------------
     # MATCH SUMMARY
     # -----------------------------------
     colA, colB, colC = st.columns(3)
 
-    colA.metric("Total Matches", len(matched))
-    colB.metric("Group1 Members", matched["G1_MEMBER_ID"].nunique())
-    colC.metric("Group2 Members", matched["G2_MEMBER_ID"].nunique())
+    colA.metric("Total Matches", len(filtered_matched))
+    colB.metric("Group1 Members", filtered_matched["G1_MEMBER_ID"].nunique())
+    colC.metric("Group2 Members", filtered_matched["G2_MEMBER_ID"].nunique())
 
     # -----------------------------------
-    # KPI FIX
+    # LOAD MATCHED DATA
     # -----------------------------------
-    g1_data, g2_data, _ = load_matched_datasets(df, matched)
+    g1_data, g2_data, _ = load_matched_datasets(df, filtered_matched)
+    combined = pd.concat([g1_data, g2_data])
 
-    def compute_kpis(df, matched_df, group):
+    filters = render_filter_ui(combined)
+    filtered = apply_filters_cached(combined, filters)
 
-        members = matched_df["G1_MEMBER_ID"].nunique() if group == "Group1" else matched_df["G2_MEMBER_ID"].nunique()
+    # -----------------------------------
+    # KPI CALCULATION (FIXED)
+    # -----------------------------------
+    def compute_kpis(df, matched_df, group_name):
+
+        if group_name == "Group1":
+            members = matched_df["G1_MEMBER_ID"].nunique()
+        else:
+            members = matched_df["G2_MEMBER_ID"].nunique()
+
         total = df["PAID"].sum()
 
         return {
@@ -97,9 +155,21 @@ if page == "📊 Matched Cohort Dashboard":
             "PMPM": total / members if members else 0
         }
 
-    k1 = compute_kpis(g1_data, matched, "Group1")
-    k2 = compute_kpis(g2_data, matched, "Group2")
+    k1 = compute_kpis(
+        filtered[filtered["GROUP"] == "Group1"],
+        filtered_matched,
+        "Group1"
+    )
 
+    k2 = compute_kpis(
+        filtered[filtered["GROUP"] == "Group2"],
+        filtered_matched,
+        "Group2"
+    )
+
+    # -----------------------------------
+    # KPI DISPLAY (SIDE-BY-SIDE)
+    # -----------------------------------
     st.markdown("## 📊 Key Metrics Overview")
 
     col1, col2 = st.columns(2)
@@ -122,9 +192,47 @@ if page == "📊 Matched Cohort Dashboard":
     with col2:
         render_kpis("Group2", k2)
 
+    # -----------------------------------
+    # ANALYSIS
+    # -----------------------------------
+    st.markdown("## 📈 Analysis")
+
+    selected_prompt = st.selectbox("Select Analysis", PROMPTS)
+
+    result = run_prompt(selected_prompt, filtered)
+
+    fig = build_chart(result, selected_prompt)
+    st.plotly_chart(fig, use_container_width=True)
+
+    # -----------------------------------
+    # INSIGHTS
+    # -----------------------------------
+    st.markdown("## 🧠 Insights")
+
+    for ins in generate_insights(selected_prompt, result):
+        st.write("•", ins)
+
+    # -----------------------------------
+    # DATA TABLE
+    # -----------------------------------
+    st.markdown("## 📄 Data Sample")
+
+    display_df = result.copy()
+
+    if "MEMBER_ID" in display_df.columns:
+        display_df = display_df.drop(columns=["MEMBER_ID"])
+
+    for col in display_df.columns:
+        if display_df[col].dtype in ["int64", "float64"] and col != "MONTH":
+            display_df[col] = display_df[col].apply(
+                lambda x: f"${x:,.0f}" if pd.notnull(x) else x
+            )
+
+    st.dataframe(display_df.head(50))
+
 
 # ============================================================
-# 📈 PAGE 2 (COMPARISON VIEW RESTORED)
+# 📈 PAGE 2: UTILIZATION & COST
 # ============================================================
 elif page == "📈 Utilization & Cost Comparison":
 
@@ -150,13 +258,10 @@ elif page == "📈 Utilization & Cost Comparison":
     pivot.columns = [f"{m}_{g}" for m, g in pivot.columns]
     pivot = pivot.reset_index()
 
-    # -----------------------------------
-    # DELTAS
-    # -----------------------------------
     def pct_diff(a, b):
         return ((a - b) / b * 100) if b != 0 else 0
 
-    pivot["Cost Δ%"] = pivot.apply(
+    pivot["Cost_%_Diff"] = pivot.apply(
         lambda x: pct_diff(
             x.get("Total_Paid_Amount_Group1", 0),
             x.get("Total_Paid_Amount_Group2", 0)
@@ -164,7 +269,7 @@ elif page == "📈 Utilization & Cost Comparison":
         axis=1
     )
 
-    pivot["Utilization Δ%"] = pivot.apply(
+    pivot["Util_%_Diff"] = pivot.apply(
         lambda x: pct_diff(
             x.get("Total_Claim_Count_Group1", 0),
             x.get("Total_Claim_Count_Group2", 0)
@@ -172,50 +277,30 @@ elif page == "📈 Utilization & Cost Comparison":
         axis=1
     )
 
-    # -----------------------------------
-    # FORMAT + RENAME
-    # -----------------------------------
-    pivot = pivot.rename(columns={
-        "Total_Paid_Amount_Group1": "G1 Paid",
-        "Total_Paid_Amount_Group2": "G2 Paid",
-        "Total_Claim_Count_Group1": "G1 Claim Count",
-        "Total_Claim_Count_Group2": "G2 Claim Count"
-    })
+    def format_df(df):
+        df = df.copy()
 
-    for col in ["G1 Paid", "G2 Paid"]:
-        pivot[col] = pivot[col].apply(lambda x: f"${x:,.0f}")
+        for col in df.columns:
+            if "Paid_Amount" in col:
+                df[col] = df[col].apply(lambda x: f"${x:,.0f}")
+            elif "Claim_Count" in col:
+                df[col] = df[col].apply(lambda x: f"{int(x):,}")
+            elif "%_Diff" in col:
+                df[col] = df[col].apply(lambda x: f"{x:+.1f}%")
 
-    for col in ["G1 Claim Count", "G2 Claim Count"]:
-        pivot[col] = pivot[col].apply(lambda x: f"{int(x):,}")
+        df.columns = [
+            "Category",
+            "Subcategory",
+            "G1 Cost",
+            "G2 Cost",
+            "G1 Utilization",
+            "G2 Utilization",
+            "Cost Δ%",
+            "Utilization Δ%"
+        ]
 
-    pivot["Cost Δ%"] = pivot["Cost Δ%"].apply(lambda x: f"{x:+.1f}%")
-    pivot["Utilization Δ%"] = pivot["Utilization Δ%"].apply(lambda x: f"{x:+.1f}%")
+        return df
 
-    pivot = pivot[[
-        "MR_LINE_DESC1_FINAL",
-        "SVC_CAT2",
-        "G1 Paid",
-        "G2 Paid",
-        "G1 Claim Count",
-        "G2 Claim Count",
-        "Cost Δ%",
-        "Utilization Δ%"
-    ]]
-
-    pivot.columns = [
-        "Category",
-        "Subcategory",
-        "G1 Paid",
-        "G2 Paid",
-        "G1 Claims",
-        "G2 Claims",
-        "Cost Δ%",
-        "Utilization Δ%"
-    ]
-
-    # -----------------------------------
-    # SEGMENTS
-    # -----------------------------------
     segments = {
         "🏥 Inpatient (FIP)": "FIP",
         "🏥 Outpatient (FOP)": "FOP",
@@ -226,10 +311,9 @@ elif page == "📈 Utilization & Cost Comparison":
 
     for title, code in segments.items():
         st.markdown(f"## {title}")
-
-        seg_df = pivot[pivot["Category"] == code]
+        seg_df = pivot[pivot["MR_LINE_DESC1_FINAL"] == code]
 
         if not seg_df.empty:
-            st.dataframe(seg_df, use_container_width=True)
+            st.dataframe(format_df(seg_df), use_container_width=True)
         else:
             st.info(f"No data available for {title}")
