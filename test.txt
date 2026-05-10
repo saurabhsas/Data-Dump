@@ -26,7 +26,7 @@ st.title("🏥 Matched Cohort Analytics Dashboard")
 
 
 # -----------------------------------
-# KPI FONT SIZE
+# KPI STYLE
 # -----------------------------------
 st.markdown("""
 <style>
@@ -48,7 +48,7 @@ page = st.sidebar.radio(
 
 
 # ============================================================
-# 📊 PAGE 1: DASHBOARD
+# 📊 PAGE 1
 # ============================================================
 if page == "📊 Matched Cohort Dashboard":
 
@@ -57,30 +57,69 @@ if page == "📊 Matched Cohort Dashboard":
         g1, g2 = load_group_match_data()
         matched = multi_caliper_matching(g1, g2)
 
-        # Save matched members
         os.makedirs("data", exist_ok=True)
         matched[["G1_MEMBER_ID", "G2_MEMBER_ID"]].to_csv(
             "data/matched_members.csv",
             index=False
         )
+
         return matched
 
     df = load_data()
     matched = get_matched()
 
     # -----------------------------------
+    # 🎛 MATCHING QUALITY + COUNTS
+    # -----------------------------------
+    st.markdown("## 🎛 Matching Quality")
+
+    caliper_counts = matched["caliper_used"].value_counts().to_dict()
+
+    CALIPER_DESC = {
+        "1e-05": f"Very Strict (5 decimal precision match) — Matches: {caliper_counts.get('1e-05', 0)}",
+        "0.0001": f"Strict (4 decimal precision) — Matches: {caliper_counts.get('0.0001', 0)}",
+        "0.001": f"Moderate (3 decimal precision) — Matches: {caliper_counts.get('0.001', 0)}",
+        "0.02": f"Loose match (broader similarity) — Matches: {caliper_counts.get('0.02', 0)}",
+        "no_caliper": f"Fallback match (ensures coverage) — Matches: {caliper_counts.get('no_caliper', 0)}"
+    }
+
+    available_calipers = ["ALL"] + sorted(matched["caliper_used"].unique())
+
+    selected = st.multiselect(
+        "Select Precision Level(s)",
+        options=available_calipers,
+        default=["ALL"],
+        format_func=lambda x: "ALL" if x == "ALL" else f"{x} → {CALIPER_DESC.get(x,'')}"
+    )
+
+    if "ALL" in selected or len(selected) == 0:
+        filtered_matched = matched
+    else:
+        filtered_matched = matched[
+            matched["caliper_used"].isin(selected)
+        ]
+
+    # -----------------------------------
+    # 📘 FULL DESCRIPTION (EXPANDED)
+    # -----------------------------------
+    st.markdown("### 📘 Precision Level Details")
+
+    for k, v in CALIPER_DESC.items():
+        st.markdown(f"**{k}** — {v}")
+
+    # -----------------------------------
     # MATCH SUMMARY
     # -----------------------------------
     colA, colB, colC = st.columns(3)
 
-    colA.metric("Total Matches", len(matched))
-    colB.metric("Group1 Members", matched["G1_MEMBER_ID"].nunique())
-    colC.metric("Group2 Members", matched["G2_MEMBER_ID"].nunique())
+    colA.metric("Total Matches", len(filtered_matched))
+    colB.metric("Group1 Members", filtered_matched["G1_MEMBER_ID"].nunique())
+    colC.metric("Group2 Members", filtered_matched["G2_MEMBER_ID"].nunique())
 
     # -----------------------------------
-    # MATCHED DATA + FILTERS
+    # LOAD DATA
     # -----------------------------------
-    g1_data, g2_data, _ = load_matched_datasets(df, matched)
+    g1_data, g2_data, _ = load_matched_datasets(df, filtered_matched)
     combined = pd.concat([g1_data, g2_data])
 
     filters = render_filter_ui(combined)
@@ -91,12 +130,7 @@ if page == "📊 Matched Cohort Dashboard":
     # -----------------------------------
     def compute_kpis(df, matched_df, group):
 
-        members = (
-            matched_df["G1_MEMBER_ID"].nunique()
-            if group == "Group1"
-            else matched_df["G2_MEMBER_ID"].nunique()
-        )
-
+        members = matched_df["G1_MEMBER_ID"].nunique() if group == "Group1" else matched_df["G2_MEMBER_ID"].nunique()
         total = df["PAID"].sum()
 
         return {
@@ -109,17 +143,8 @@ if page == "📊 Matched Cohort Dashboard":
             "PMPM": total / members if members else 0
         }
 
-    k1 = compute_kpis(
-        filtered[filtered["GROUP"] == "Group1"],
-        matched,
-        "Group1"
-    )
-
-    k2 = compute_kpis(
-        filtered[filtered["GROUP"] == "Group2"],
-        matched,
-        "Group2"
-    )
+    k1 = compute_kpis(filtered[filtered["GROUP"] == "Group1"], filtered_matched, "Group1")
+    k2 = compute_kpis(filtered[filtered["GROUP"] == "Group2"], filtered_matched, "Group2")
 
     # -----------------------------------
     # KPI DISPLAY
@@ -167,7 +192,7 @@ if page == "📊 Matched Cohort Dashboard":
         st.write("•", ins)
 
     # -----------------------------------
-    # DATA TABLE
+    # DATA SAMPLE
     # -----------------------------------
     st.markdown("## 📄 Data Sample")
 
@@ -186,7 +211,7 @@ if page == "📊 Matched Cohort Dashboard":
 
 
 # ============================================================
-# 📈 PAGE 2: UTILIZATION & COST COMPARISON (FIXED)
+# 📈 PAGE 2
 # ============================================================
 elif page == "📈 Utilization & Cost Comparison":
 
@@ -194,9 +219,10 @@ elif page == "📈 Utilization & Cost Comparison":
 
     df = load_summary_data()
 
-    # -----------------------------------
-    # AGGREGATION (PIPELINE OUTPUT)
-    # -----------------------------------
+    if df is None or df.empty:
+        st.error("No summary data available. Check DB or matching file.")
+        st.stop()
+
     summary = (
         df.groupby(["MR_LINE_DESC1_FINAL", "SVC_CAT2", "GROUP"])
         .agg({
@@ -206,9 +232,6 @@ elif page == "📈 Utilization & Cost Comparison":
         .reset_index()
     )
 
-    # -----------------------------------
-    # PIVOT
-    # -----------------------------------
     pivot = summary.pivot(
         index=["MR_LINE_DESC1_FINAL", "SVC_CAT2"],
         columns="GROUP",
@@ -218,31 +241,19 @@ elif page == "📈 Utilization & Cost Comparison":
     pivot.columns = [f"{m}_{g}" for m, g in pivot.columns]
     pivot = pivot.reset_index()
 
-    # -----------------------------------
-    # DELTA CALCULATION
-    # -----------------------------------
     def pct_diff(a, b):
         return ((a - b) / b * 100) if b != 0 else 0
 
     pivot["Cost Δ%"] = pivot.apply(
-        lambda x: pct_diff(
-            x.get("Total_Paid_Amount_Group1", 0),
-            x.get("Total_Paid_Amount_Group2", 0)
-        ),
+        lambda x: pct_diff(x["Total_Paid_Amount_Group1"], x["Total_Paid_Amount_Group2"]),
         axis=1
     )
 
     pivot["Utilization Δ%"] = pivot.apply(
-        lambda x: pct_diff(
-            x.get("Total_Claim_Count_Group1", 0),
-            x.get("Total_Claim_Count_Group2", 0)
-        ),
+        lambda x: pct_diff(x["Total_Claim_Count_Group1"], x["Total_Claim_Count_Group2"]),
         axis=1
     )
 
-    # -----------------------------------
-    # RENAME
-    # -----------------------------------
     pivot = pivot.rename(columns={
         "Total_Paid_Amount_Group1": "G1 Paid",
         "Total_Paid_Amount_Group2": "G2 Paid",
@@ -250,9 +261,6 @@ elif page == "📈 Utilization & Cost Comparison":
         "Total_Claim_Count_Group2": "G2 Claim Count"
     })
 
-    # -----------------------------------
-    # FORMAT
-    # -----------------------------------
     for col in ["G1 Paid", "G2 Paid"]:
         pivot[col] = pivot[col].apply(lambda x: f"${x:,.0f}")
 
@@ -261,20 +269,6 @@ elif page == "📈 Utilization & Cost Comparison":
 
     pivot["Cost Δ%"] = pivot["Cost Δ%"].apply(lambda x: f"{x:+.1f}%")
     pivot["Utilization Δ%"] = pivot["Utilization Δ%"].apply(lambda x: f"{x:+.1f}%")
-
-    # -----------------------------------
-    # FINAL STRUCTURE
-    # -----------------------------------
-    pivot = pivot[[
-        "MR_LINE_DESC1_FINAL",
-        "SVC_CAT2",
-        "G1 Paid",
-        "G2 Paid",
-        "G1 Claim Count",
-        "G2 Claim Count",
-        "Cost Δ%",
-        "Utilization Δ%"
-    ]]
 
     pivot.columns = [
         "Category",
@@ -287,9 +281,6 @@ elif page == "📈 Utilization & Cost Comparison":
         "Utilization Δ%"
     ]
 
-    # -----------------------------------
-    # SEGMENT DISPLAY
-    # -----------------------------------
     segments = {
         "🏥 Inpatient (FIP)": "FIP",
         "🏥 Outpatient (FOP)": "FOP",
