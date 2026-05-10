@@ -1,53 +1,3 @@
-# core/summary_pipeline.py
-
-import pandas as pd
-import streamlit as st
-
-
-@st.cache_data(show_spinner=True)
-def run_summary_pipeline():
-
-    # -----------------------------------
-    # 👉 PLACE YOUR FULL PROVIDED CODE HERE
-    # -----------------------------------
-    # Example structure (keep your original logic)
-
-    # df = pd.read_sql(query, connection)
-    # df["SVC_CAT2"] = ...
-    # df["MR_LINE_DESC1_FINAL"] = ...
-    # grouping logic ...
-
-    # -----------------------------------
-    # FINAL OUTPUT REQUIRED
-    # -----------------------------------
-    # Summary_Group1
-    # Summary_Group2
-
-    # ⚠️ IMPORTANT: ensure column names are consistent
-
-    Summary_Group1["GROUP"] = "Group1"
-    Summary_Group2["GROUP"] = "Group2"
-
-    return Summary_Group1, Summary_Group2
-
-
-
-# core/summary_loader.py
-
-import pandas as pd
-from core.summary_pipeline import run_summary_pipeline
-
-
-def load_summary_data():
-
-    g1, g2 = run_summary_pipeline()
-
-    df = pd.concat([g1, g2], ignore_index=True)
-
-    return df
-
-
-
 import streamlit as st
 import pandas as pd
 import plotly.express as px
@@ -75,6 +25,19 @@ st.title("🏥 Matched Cohort Analytics Dashboard")
 
 
 # -----------------------------------
+# KPI FONT SIZE (REDUCED)
+# -----------------------------------
+st.markdown("""
+<style>
+div[data-testid="stMetricValue"] {
+    font-size: 22px !important;
+    font-weight: 600;
+}
+</style>
+""", unsafe_allow_html=True)
+
+
+# -----------------------------------
 # NAVIGATION
 # -----------------------------------
 page = st.sidebar.radio(
@@ -97,11 +60,10 @@ if page == "📊 Matched Cohort Dashboard":
     matched = get_matched()
 
     # -----------------------------------
-    # 🎛 MATCHING QUALITY
+    # MATCHING QUALITY
     # -----------------------------------
     st.markdown("## 🎛 Matching Quality")
 
-    # Calculate counts first
     caliper_counts = matched["caliper_used"].value_counts().to_dict()
 
     CALIPER_DESC = {
@@ -138,7 +100,7 @@ if page == "📊 Matched Cohort Dashboard":
             matched["caliper_used"].isin(selected_values)
         ]
 
-    # Show descriptions
+    # Precision descriptions
     st.markdown("### 📘 Precision Levels Description")
     for k, v in CALIPER_DESC.items():
         st.markdown(f"**{k}** — {v}")
@@ -162,10 +124,15 @@ if page == "📊 Matched Cohort Dashboard":
     filtered = apply_filters_cached(combined, filters)
 
     # -----------------------------------
-    # KPI CALCULATION
+    # KPI CALCULATION (FIXED)
     # -----------------------------------
-    def compute_kpis(df):
-        members = df["MEMBER_ID"].nunique()
+    def compute_kpis(df, matched_df, group_name):
+
+        if group_name == "Group1":
+            members = matched_df["G1_MEMBER_ID"].nunique()
+        else:
+            members = matched_df["G2_MEMBER_ID"].nunique()
+
         total = df["PAID"].sum()
 
         return {
@@ -178,8 +145,17 @@ if page == "📊 Matched Cohort Dashboard":
             "PMPM": total / members if members else 0
         }
 
-    k1 = compute_kpis(filtered[filtered["GROUP"] == "Group1"])
-    k2 = compute_kpis(filtered[filtered["GROUP"] == "Group2"])
+    k1 = compute_kpis(
+        filtered[filtered["GROUP"] == "Group1"],
+        filtered_matched,
+        "Group1"
+    )
+
+    k2 = compute_kpis(
+        filtered[filtered["GROUP"] == "Group2"],
+        filtered_matched,
+        "Group2"
+    )
 
     # -----------------------------------
     # KPI DISPLAY (SIDE-BY-SIDE)
@@ -331,9 +307,3 @@ elif page == "📈 Utilization & Cost Comparison":
             st.dataframe(format_df(seg_df), use_container_width=True)
         else:
             st.info(f"No data available for {title}")
-
-
-
-
-
-
