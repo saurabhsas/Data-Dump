@@ -1,61 +1,31 @@
-proc sql;	
-connect to odbc	
-(DATASRC=IRADW_SAWESCPDSAPP00_UAT_IND user="&cdisql_id." pw="&cdisql_pw." );		
-create table MBRSHP_HCG (COMPRESS=YES) as 	
-select distinct 
-MAIN.ACCOUNTID AS ACCOUNT_ID,
-MAIN.ACCOUNTNAME AS ACCOUNT_NAME,
-MAIN.MEMBERID AS MEMBER_ID,
-MAIN.MEMBERUCI AS MBR_UCI,
-MAIN.ELIGIBILITYYEARANDMONTH AS ELIGIBILITY_YM,
-MAIN.FSRESPONSIBILITY AS FS_RESPONSIBILITY,
-MAIN.FSPRODUCT AS FS_PRODUCT,
-MAIN.POPSUBGROUP1 AS FS_Subgroup_1,
-MAIN.COUNTY as Member_County,
-1 AS MM
+# core/summary_pipeline.py
 
-from connection to odbc 
-(select distinct
- ACCOUNTID
-,ACCOUNTNAME
-,MEMBERID
-,MEMBERUCI
-,ELIGIBILITYYEARANDMONTH
-,FSRESPONSIBILITY
-,FSPRODUCT
-,POPSUBGROUP1
-,COUNTY
-
-from IRADW_UAT.P3_ALLPHI.SDAL_MEMBER_ENROLLMENT
-WHERE ELIGIBILITYYEARANDMONTH between '202301' and '202312') as main
-where MAIN.MEMBERID in (SELECT DISTINCT MEMBER_ID from STAYER )
-;		
-disconnect from odbc;	
-quit;
+import pandas as pd
+import streamlit as st
 
 
-# SQL query
-query = """
-SELECT DISTINCT
-    MAIN.ACCOUNTID AS ACCOUNT_ID,
-    MAIN.ACCOUNTNAME AS ACCOUNT_NAME,
-    MAIN.MEMBERID AS MEMBER_ID,
-    MAIN.MEMBERUCI AS MBR_UCI,
-    MAIN.ELIGIBILITYYEARANDMONTH AS ELIGIBILITY_YM,
-    MAIN.FSRESPONSIBILITY AS FS_RESPONSIBILITY,
-    MAIN.FSPRODUCT AS FS_PRODUCT,
-    MAIN.POPSUBGROUP1 AS FS_Subgroup_1,
-    MAIN.COUNTY AS Member_County,
-    1 AS MM
-FROM IRADW_UAT.P3_ALLPHI.SDAL_MEMBER_ENROLLMENT MAIN
-WHERE MAIN.ELIGIBILITYYEARANDMONTH BETWEEN '202301' AND '202312'
-AND MAIN.MEMBERID IN (
-    SELECT DISTINCT MEMBER_ID FROM STAYER
-)
-"""
+@st.cache_data(show_spinner=True)
+def run_summary_pipeline():
 
-# Load into DataFrame
-df = pd.read_sql(query, conn)
+    # -----------------------------------
+    # 👉 PLACE YOUR FULL PROVIDED CODE HERE
+    # -----------------------------------
+    # Example structure (keep your original logic)
 
-# Optional: close connection
-conn.close()
+    # df = pd.read_sql(query, connection)
+    # df["SVC_CAT2"] = ...
+    # df["MR_LINE_DESC1_FINAL"] = ...
+    # grouping logic ...
+
+    # -----------------------------------
+    # FINAL OUTPUT REQUIRED
+    # -----------------------------------
+    # Summary_Group1
+    # Summary_Group2
+
+    # ⚠️ IMPORTANT: ensure column names are consistent
+
+    Summary_Group1["GROUP"] = "Group1"
+    Summary_Group2["GROUP"] = "Group2"
+
+    return Summary_Group1, Summary_Group2
