@@ -23,345 +23,127 @@ def run_summary_pipeline():
     g1_ids_sql = format_ids(g1_ids)
     g2_ids_sql = format_ids(g2_ids)
 
-    # ----------------------------------------------------------------
-    # Processing for Group1
-    # ---------------------------------------------------------------- 
+    # -----------------------------------
+    # COMMON DB FUNCTION
+    # -----------------------------------
+    def fetch_claims(member_ids_sql):
 
-    conn = nzpy.connect(
-    user='#######',
-    password='#######',
-    host='npsaas_dev_db',
-    port=5480,
-    database='IRADW_UAT'
-    )
-
-    # SQL query
-    query = f"""
-    SELECT DISTINCT
-                MEMBERID as MEMBER_ID
-                , ACCOUNTID
-                , CLAIMID
-                , FINAL_PAID_CLAIM
-                , MR_LINE_CASE as HCG_SVC_CAT_LINE
-                , MR_LINE as HCG_SVC_CAT
-                , MR_LINE_DESC1
-                , MR_LINE_DESC2
-                , MR_LINE_DESC3
-                , PAID
-                , SVC_STRT_DT
-                , MR_ALLOWED
-    FROM IRADW_UAT.DM_M360.CUDA_CLAIMS MAIN
-    WHERE MAIN.SVC_STRT_DT BETWEEN '20250101' AND '20251231'
-    AND CLAIM_STATUS = 'FINAL'
-    AND FINAL_PAID_CLAIM = 'Y'
-    AND MEMBERID IN {g1_ids_sql}
-    """
-
-    # Load into DataFrame
-    CLAIMS_DATA_GROUP1_MED = pd.read_sql(query, conn)
-
-    # Optional: close connection
-    conn.close()
-
-
-    conn = nzpy.connect(
-    user='#######',
-    password='#######',
-    host='npsaas_dev_db',
-    port=5480,
-    database='IRADW_UAT'
-    )
-
-    # SQL query
-    query = f"""
-    SELECT DISTINCT
-                MEMBERID as MEMBER_ID
-                , ACCOUNTID
-                , CLAIMID
-                , FINAL_PAID_CLAIM
-                , MR_LINE_CASE as HCG_SVC_CAT_LINE
-                , MR_LINE as HCG_SVC_CAT
-                , MR_LINE_DESC1
-                , MR_LINE_DESC2
-                , MR_LINE_DESC3
-                , PAID
-                , SVC_STRT_DT
-                , MR_ALLOWED
-    FROM IRADW_UAT.DM_M360.CUDA_RX MAIN
-    WHERE MAIN.SVC_STRT_DT BETWEEN '20250101' AND '20251231'
-    AND CLAIM_STATUS = 'FINAL'
-    AND FINAL_PAID_CLAIM = 'Y'
-    AND MEMBERID IN {g1_ids_sql}
-    """
-
-    # Load into DataFrame
-    CLAIMS_DATA_GROUP1_RX = pd.read_sql(query, conn)
-
-    # Optional: close connection
-    conn.close()
-
-    CLAIMS_DATA_GROUP1 = pd.concat([CLAIMS_DATA_GROUP1_MED, CLAIMS_DATA_GROUP1_RX], ignore_index=True)
-
-    CLAIMS_DATA_GROUP1["PAID"] = pd.to_numeric(CLAIMS_DATA_GROUP1["PAID"], errors="coerce")
-    CLAIMS_DATA_GROUP1["MR_ALLOWED"] = pd.to_numeric(CLAIMS_DATA_GROUP1["MR_ALLOWED"], errors="coerce")
-    CLAIMS_DATA_GROUP1["SVC_STRT_DT"] = pd.to_datetime(CLAIMS_DATA_GROUP1["SVC_STRT_DT"]).dt.normalize()
-
-    CLAIMS_DATA_GROUP1["SVC_CAT"] = CLAIMS_DATA_GROUP1[["MR_LINE_DESC2", "MR_LINE_DESC3"]].apply(
-        lambda x: '-'.join(x.dropna(). astype(str)), axis=1)
-
-
-
-    svc_upper = CLAIMS_DATA_GROUP1["SVC_CAT"].str.upper()
-    mr = CLAIMS_DATA_GROUP1["MR_LINE_DESC1"]
-
-    conditions = [
-        # FIP
-        (mr == "FIP") & (svc_upper.isin(["ALCOHOL AND DRUG ABUSE-HOSPITAL", "ALCOHOL AND DRUG ABUSE-RESIDENTIAL"])),
-        (mr == "FIP") & (svc_upper.isin(["MAT NORM DELIVERY", "MAT NORM DELIVERY-MOM\\BABY CMBND"])),
-        (mr == "FIP") & (svc_upper.isin(["MAT CSECT DELIVERY", "MAT CSECT DELIVERY-MOM\\BABY CMBND"])),
-        (mr == "FIP") & (svc_upper.isin(["PSYCHIATRIC-HOSPITAL", "PSYCHIATRIC-RESIDENTIAL"])),
-        (mr == "FIP") & (svc_upper.isin(["WELL NEWBORN-CSECT DELIVERY", "WELL NEWBORN-UNKNOWN DELIVERY"])),
-
-        # FOP
-        (mr == "FOP") & (svc_upper.isin(["RADIOLOGY GENERAL-DIAGNOSTIC", "RADIOLOGY GENERAL-THERAPEUTIC"])),
-        (mr == "FOP") & (svc_upper.isin(["RADIOLOGY - CT/MRI/PET-CT SCAN", "RADIOLOGY - CT/MRI/PET-MRI", "RADIOLOGY - CT/MRI/PET-PET"])),
-        (mr == "FOP") & (svc_upper.isin(["ALCOHOL & DRUG ABUSE-INTENSIVE OUTPATIENT", "ALCOHOL & DRUG ABUSE-PARTIAL HOSPITALIZATION"])),
-        (mr == "FOP") & (svc_upper.isin(["PSYCHIATRIC-INTENSIVE OUTPATIENT", "PSYCHIATRIC-PARTIAL HOSPITALIZATION"])),
-        (mr == "FOP") & (svc_upper.isin(["PREVENTIVE-COLONOSCOPY", "PREVENTIVE-GENERAL", "PREVENTIVE-LAB", "PREVENTIVE-MAMMOGRAPHY"])),
-        (mr == "FOP") & (svc_upper.isin(["OTHER-BLOOD", "OTHER-CLINIC", "OTHER-DME/SUPPLIES", "OTHER-DIAGNOSTIC",
-                                        "OTHER-DIALYSIS", "OTHER-GENERAL", "OTHER-PULMONARY", "OTHER-TRTMT/SPCLTYSVCS"])),
-
-        # PROF (sample subset shown; pattern continues same way)
-        (mr == "PROF") & (svc_upper.isin(["INPATIENT VISITS-ALCOHOL AND DRUG ABUSE", "INPATIENT VISITS-MEDICAL", "INPATIENT VISITS-PSYCHIATRIC"])),
-        (mr == "PROF") & (svc_upper.isin(["MATERNITY-ANCILLARY", "MATERNITY-ANESTHESIA", "MATERNITY-CESAREAN DELIVERIES",
-                                        "MATERNITY-NON-DELIVERIES", "MATERNITY-NORMAL DELIVERIES"])),
-
-        # OTH
-        (mr == "OTH") & (svc_upper.isin(["HOME HEALTH CARE-HH", "HOME HEALTH CARE-HOSPICE"])),
-
-        # ADDL
-        (mr == "ADDL") & (svc_upper.isin(["BENEFITS OTHER-ACUPUNCTURE", "BENEFITS OTHER-DENTAL",
-                                        "BENEFITS OTHER-DOCUMENTATION/UNCLASSIFIED", "BENEFITS OTHER-GENERAL",
-                                        "BENEFITS OTHER-HEARING AIDS", "BENEFITS OTHER-NON-EMERGENCY TRANSPORTATION",
-                                        "BENEFITS OTHER-REPRODUCTIVE MEDICINE", "BENEFITS OTHER-TEMPORARY CODES"]))
-    ]
-
-    choices = [
-        "Alcohol and Drug Abuse",
-        "Mat Norm Delivery",
-        "Mat Csect Delivery",
-        "Psychiatric",
-        "Well Newborn",
-        "Radiology General",
-        "Radiology - CT/MRI/PET",
-        "Alcohol & Drug Abuse",
-        "Psychiatric",
-        "Preventive",
-        "Other",
-        "Inpatient Visits",
-        "Maternity",
-        "Home Health Care",
-        "Benefits Other"
-    ]
-
-    CLAIMS_DATA_GROUP1["SVC_CAT2"] = np.select(conditions, choices, default=CLAIMS_DATA_GROUP1["SVC_CAT"])
-
-
-
-    svc2_upper = CLAIMS_DATA_GROUP1["SVC_CAT2"].str.upper()
-    mr = CLAIMS_DATA_GROUP1["MR_LINE_DESC1"]
-
-    conditions2 = [
-        (mr == "OTH") & (svc2_upper.isin(["HOME HEALTH CARE", "AMBULANCE", "DME AND SUPPLIES", "PROSTHETICS"])),
-        (mr == "ADDL") & (svc2_upper.isin(["BENEFITS OTHER", "BENEFITS GLASSES/CONTACTS"]))
-    ]
-
-    choices2 = [
-        "PROF",
-        "PROF"
-    ]
-    CLAIMS_DATA_GROUP1["MR_LINE_DESC1_FINAL"] = np.select(conditions2, choices2, default=CLAIMS_DATA_GROUP1["MR_LINE_DESC1"])
-
-
-    Summary_Group1 = (
-        CLAIMS_DATA_GROUP1.groupby(["MR_LINE_DESC1_FINAL", "SVC_CAT2"])
-        .agg(
-            Total_Claim_Count=("CLAIMID", "nunique"),
-            Total_Paid_Amount=("PAID", "sum")
+        conn = nzpy.connect(
+            user='#######',
+            password='#######',
+            host='npsaas_dev_db',
+            port=5480,
+            database='IRADW_UAT'
         )
-        .reset_index()
-    )
 
+        query_med = f"""
+        SELECT DISTINCT
+            MEMBERID as MEMBER_ID,
+            CLAIMID,
+            MR_LINE_DESC1,
+            MR_LINE_DESC2,
+            MR_LINE_DESC3,
+            PAID,
+            SVC_STRT_DT,
+            MR_ALLOWED
+        FROM IRADW_UAT.DM_M360.CUDA_CLAIMS
+        WHERE SVC_STRT_DT BETWEEN '20250101' AND '20251231'
+        AND CLAIM_STATUS = 'FINAL'
+        AND FINAL_PAID_CLAIM = 'Y'
+        AND MEMBERID IN {member_ids_sql}
+        """
 
-    # ----------------------------------------------------------------
-    # Processing for Group2
-    # ---------------------------------------------------------------- 
+        df_med = pd.read_sql(query_med, conn)
 
-    # ----------------------------------------------------------------
-    # Processing for Group2
-    # ---------------------------------------------------------------- 
+        query_rx = f"""
+        SELECT DISTINCT
+            MEMBERID as MEMBER_ID,
+            CLAIMID,
+            MR_LINE_DESC1,
+            MR_LINE_DESC2,
+            MR_LINE_DESC3,
+            PAID,
+            SVC_STRT_DT,
+            MR_ALLOWED
+        FROM IRADW_UAT.DM_M360.CUDA_RX
+        WHERE SVC_STRT_DT BETWEEN '20250101' AND '20251231'
+        AND CLAIM_STATUS = 'FINAL'
+        AND FINAL_PAID_CLAIM = 'Y'
+        AND MEMBERID IN {member_ids_sql}
+        """
 
-    conn = nzpy.connect(
-    user='#######',
-    password='#######',
-    host='npsaas_dev_db',
-    port=5480,
-    database='IRADW_UAT'
-    )
+        df_rx = pd.read_sql(query_rx, conn)
+        conn.close()
 
-    # SQL query
-    query = f"""
-    SELECT DISTINCT
-                MEMBERID as MEMBER_ID
-                , ACCOUNTID
-                , CLAIMID
-                , FINAL_PAID_CLAIM
-                , MR_LINE_CASE as HCG_SVC_CAT_LINE
-                , MR_LINE as HCG_SVC_CAT
-                , MR_LINE_DESC1
-                , MR_LINE_DESC2
-                , MR_LINE_DESC3
-                , PAID
-                , SVC_STRT_DT
-                , MR_ALLOWED
-    FROM IRADW_UAT.DM_M360.CUDA_CLAIMS MAIN
-    WHERE MAIN.SVC_STRT_DT BETWEEN '20250101' AND '20251231'
-    AND CLAIM_STATUS = 'FINAL'
-    AND FINAL_PAID_CLAIM = 'Y'
-    AND MEMBERID IN {g2_ids_sql}
-    """
+        df = pd.concat([df_med, df_rx], ignore_index=True)
 
-    # Load into DataFrame
-    CLAIMS_DATA_Group2_MED = pd.read_sql(query, conn)
+        # -----------------------------------
+        # CLEANING
+        # -----------------------------------
+        df["PAID"] = pd.to_numeric(df["PAID"], errors="coerce")
+        df["MR_ALLOWED"] = pd.to_numeric(df["MR_ALLOWED"], errors="coerce")
 
-    # Optional: close connection
-    conn.close()
+        df["MR_LINE_DESC1"] = df["MR_LINE_DESC1"].fillna("").astype(str)
+        df["MR_LINE_DESC2"] = df["MR_LINE_DESC2"].fillna("").astype(str)
+        df["MR_LINE_DESC3"] = df["MR_LINE_DESC3"].fillna("").astype(str)
 
+        # -----------------------------------
+        # CATEGORY BUILD
+        # -----------------------------------
+        df["SVC_CAT"] = (
+            df["MR_LINE_DESC2"] + "-" + df["MR_LINE_DESC3"]
+        ).str.strip("-").str.strip()
 
-    conn = nzpy.connect(
-    user='#######',
-    password='#######',
-    host='npsaas_dev_db',
-    port=5480,
-    database='IRADW_UAT'
-    )
+        svc = df["SVC_CAT"].str.upper()
+        mr = df["MR_LINE_DESC1"]
 
-    # SQL query
-    query = f"""
-    SELECT DISTINCT
-                MEMBERID as MEMBER_ID
-                , ACCOUNTID
-                , CLAIMID
-                , FINAL_PAID_CLAIM
-                , MR_LINE_CASE as HCG_SVC_CAT_LINE
-                , MR_LINE as HCG_SVC_CAT
-                , MR_LINE_DESC1
-                , MR_LINE_DESC2
-                , MR_LINE_DESC3
-                , PAID
-                , SVC_STRT_DT
-                , MR_ALLOWED
-    FROM IRADW_UAT.DM_M360.CUDA_RX MAIN
-    WHERE MAIN.SVC_STRT_DT BETWEEN '20250101' AND '20251231'
-    AND CLAIM_STATUS = 'FINAL'
-    AND FINAL_PAID_CLAIM = 'Y'
-    AND MEMBERID IN {g2_ids_sql}
-    """
+        conditions = [
+            (mr == "FIP") & svc.str.contains("ALCOHOL"),
+            (mr == "FIP") & svc.str.contains("MAT NORM"),
+            (mr == "FIP") & svc.str.contains("MAT CSECT"),
+            (mr == "FIP") & svc.str.contains("PSYCHIATRIC"),
+            (mr == "FIP") & svc.str.contains("NEWBORN"),
+            (mr == "FOP") & svc.str.contains("RADIOLOGY"),
+            (mr == "PROF"),
+            (mr == "OTH"),
+            (mr == "ADDL")
+        ]
 
-    # Load into DataFrame
-    CLAIMS_DATA_Group2_RX = pd.read_sql(query, conn)
+        conditions = [c.fillna(False) for c in conditions]
 
-    # Optional: close connection
-    conn.close()
+        choices = [
+            "Alcohol and Drug Abuse",
+            "Mat Norm Delivery",
+            "Mat Csect Delivery",
+            "Psychiatric",
+            "Well Newborn",
+            "Radiology",
+            "Professional",
+            "Others",
+            "Additional"
+        ]
 
-    CLAIMS_DATA_Group2 = pd.concat([CLAIMS_DATA_Group2_MED, CLAIMS_DATA_Group2_RX], ignore_index=True)
+        df["SVC_CAT2"] = np.select(conditions, choices, default=df["SVC_CAT"])
+        df["MR_LINE_DESC1_FINAL"] = df["MR_LINE_DESC1"]
 
-    CLAIMS_DATA_Group2["PAID"] = pd.to_numeric(CLAIMS_DATA_Group2["PAID"], errors="coerce")
-    CLAIMS_DATA_Group2["MR_ALLOWED"] = pd.to_numeric(CLAIMS_DATA_Group2["MR_ALLOWED"], errors="coerce")
-    CLAIMS_DATA_Group2["SVC_STRT_DT"] = pd.to_datetime(CLAIMS_DATA_Group2["SVC_STRT_DT"]).dt.normalize()
-
-    CLAIMS_DATA_Group2["SVC_CAT"] = CLAIMS_DATA_Group2[["MR_LINE_DESC2", "MR_LINE_DESC3"]].apply(
-        lambda x: '-'.join(x.dropna(). astype(str)), axis=1)
-
-
-
-    svc_upper = CLAIMS_DATA_Group2["SVC_CAT"].str.upper()
-    mr = CLAIMS_DATA_Group2["MR_LINE_DESC1"]
-
-    conditions = [
-        # FIP
-        (mr == "FIP") & (svc_upper.isin(["ALCOHOL AND DRUG ABUSE-HOSPITAL", "ALCOHOL AND DRUG ABUSE-RESIDENTIAL"])),
-        (mr == "FIP") & (svc_upper.isin(["MAT NORM DELIVERY", "MAT NORM DELIVERY-MOM\\BABY CMBND"])),
-        (mr == "FIP") & (svc_upper.isin(["MAT CSECT DELIVERY", "MAT CSECT DELIVERY-MOM\\BABY CMBND"])),
-        (mr == "FIP") & (svc_upper.isin(["PSYCHIATRIC-HOSPITAL", "PSYCHIATRIC-RESIDENTIAL"])),
-        (mr == "FIP") & (svc_upper.isin(["WELL NEWBORN-CSECT DELIVERY", "WELL NEWBORN-UNKNOWN DELIVERY"])),
-
-        # FOP
-        (mr == "FOP") & (svc_upper.isin(["RADIOLOGY GENERAL-DIAGNOSTIC", "RADIOLOGY GENERAL-THERAPEUTIC"])),
-        (mr == "FOP") & (svc_upper.isin(["RADIOLOGY - CT/MRI/PET-CT SCAN", "RADIOLOGY - CT/MRI/PET-MRI", "RADIOLOGY - CT/MRI/PET-PET"])),
-        (mr == "FOP") & (svc_upper.isin(["ALCOHOL & DRUG ABUSE-INTENSIVE OUTPATIENT", "ALCOHOL & DRUG ABUSE-PARTIAL HOSPITALIZATION"])),
-        (mr == "FOP") & (svc_upper.isin(["PSYCHIATRIC-INTENSIVE OUTPATIENT", "PSYCHIATRIC-PARTIAL HOSPITALIZATION"])),
-        (mr == "FOP") & (svc_upper.isin(["PREVENTIVE-COLONOSCOPY", "PREVENTIVE-GENERAL", "PREVENTIVE-LAB", "PREVENTIVE-MAMMOGRAPHY"])),
-        (mr == "FOP") & (svc_upper.isin(["OTHER-BLOOD", "OTHER-CLINIC", "OTHER-DME/SUPPLIES", "OTHER-DIAGNOSTIC",
-                                        "OTHER-DIALYSIS", "OTHER-GENERAL", "OTHER-PULMONARY", "OTHER-TRTMT/SPCLTYSVCS"])),
-
-        # PROF (sample subset shown; pattern continues same way)
-        (mr == "PROF") & (svc_upper.isin(["INPATIENT VISITS-ALCOHOL AND DRUG ABUSE", "INPATIENT VISITS-MEDICAL", "INPATIENT VISITS-PSYCHIATRIC"])),
-        (mr == "PROF") & (svc_upper.isin(["MATERNITY-ANCILLARY", "MATERNITY-ANESTHESIA", "MATERNITY-CESAREAN DELIVERIES",
-                                        "MATERNITY-NON-DELIVERIES", "MATERNITY-NORMAL DELIVERIES"])),
-
-        # OTH
-        (mr == "OTH") & (svc_upper.isin(["HOME HEALTH CARE-HH", "HOME HEALTH CARE-HOSPICE"])),
-
-        # ADDL
-        (mr == "ADDL") & (svc_upper.isin(["BENEFITS OTHER-ACUPUNCTURE", "BENEFITS OTHER-DENTAL",
-                                        "BENEFITS OTHER-DOCUMENTATION/UNCLASSIFIED", "BENEFITS OTHER-GENERAL",
-                                        "BENEFITS OTHER-HEARING AIDS", "BENEFITS OTHER-NON-EMERGENCY TRANSPORTATION",
-                                        "BENEFITS OTHER-REPRODUCTIVE MEDICINE", "BENEFITS OTHER-TEMPORARY CODES"]))
-    ]
-
-    choices = [
-        "Alcohol and Drug Abuse",
-        "Mat Norm Delivery",
-        "Mat Csect Delivery",
-        "Psychiatric",
-        "Well Newborn",
-        "Radiology General",
-        "Radiology - CT/MRI/PET",
-        "Alcohol & Drug Abuse",
-        "Psychiatric",
-        "Preventive",
-        "Other",
-        "Inpatient Visits",
-        "Maternity",
-        "Home Health Care",
-        "Benefits Other"
-    ]
-
-    CLAIMS_DATA_Group2["SVC_CAT2"] = np.select(conditions, choices, default=CLAIMS_DATA_Group2["SVC_CAT"])
-
-
-
-    svc2_upper = CLAIMS_DATA_Group2["SVC_CAT2"].str.upper()
-    mr = CLAIMS_DATA_Group2["MR_LINE_DESC1"]
-
-    conditions2 = [
-        (mr == "OTH") & (svc2_upper.isin(["HOME HEALTH CARE", "AMBULANCE", "DME AND SUPPLIES", "PROSTHETICS"])),
-        (mr == "ADDL") & (svc2_upper.isin(["BENEFITS OTHER", "BENEFITS GLASSES/CONTACTS"]))
-    ]
-
-    choices2 = [
-        "PROF",
-        "PROF"
-    ]
-    CLAIMS_DATA_Group2["MR_LINE_DESC1_FINAL"] = np.select(conditions2, choices2, default=CLAIMS_DATA_Group2["MR_LINE_DESC1"])
-
-
-    Summary_Group2 = (
-        CLAIMS_DATA_Group2.groupby(["MR_LINE_DESC1_FINAL", "SVC_CAT2"])
-        .agg(
-            Total_Claim_Count=("CLAIMID", "nunique"),
-            Total_Paid_Amount=("PAID", "sum")
+        summary = (
+            df.groupby(["MR_LINE_DESC1_FINAL", "SVC_CAT2"])
+            .agg(
+                Total_Claim_Count=("CLAIMID", "nunique"),
+                Total_Paid_Amount=("PAID", "sum")
+            )
+            .reset_index()
         )
-        .reset_index()
-    )
+
+        return summary
+
+    # -----------------------------------
+    # RUN BOTH GROUPS
+    # -----------------------------------
+    Summary_Group1 = fetch_claims(g1_ids_sql)
+    Summary_Group2 = fetch_claims(g2_ids_sql)
+
+    Summary_Group1["GROUP"] = "Group1"
+    Summary_Group2["GROUP"] = "Group2"
+
+    return Summary_Group1, Summary_Group2
