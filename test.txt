@@ -14,15 +14,9 @@ def run_summary_pipeline():
     # -----------------------------------
     matched_df = pd.read_csv("data/matched_members.csv", dtype=str)
 
-    matched_df["G1_MEMBER_ID"] = matched_df["G1_MEMBER_ID"].astype(str)
-    matched_df["G2_MEMBER_ID"] = matched_df["G2_MEMBER_ID"].astype(str)
+    g1_ids = matched_df["G1_MEMBER_ID"].astype(str).unique().tolist()
+    g2_ids = matched_df["G2_MEMBER_ID"].astype(str).unique().tolist()
 
-    g1_ids = matched_df["G1_MEMBER_ID"].unique().tolist()
-    g2_ids = matched_df["G2_MEMBER_ID"].unique().tolist()
-
-    # -----------------------------------
-    # FORMAT SQL IDS
-    # -----------------------------------
     def format_ids(ids):
         return "(" + ",".join([f"'{x}'" for x in ids]) + ")"
 
@@ -32,122 +26,79 @@ def run_summary_pipeline():
     # -----------------------------------
     # DB CONNECTION
     # -----------------------------------
-    def get_connection():
+    def get_conn():
         return nzpy.connect(
-            user='XXXXXXXX',
-            password='XXXXXXXX',
-            host='npsaas_dev_db',
+            user="XXXXXXXX",
+            password="XXXXXXXX",
+            host="npsaas_dev_db",
             port=5480,
-            database='IRADW_UAT'
+            database="IRADW_UAT"
         )
 
     # -----------------------------------
-    # COMMON TRANSFORMATION FUNCTION
+    # COMMON PROCESS
     # -----------------------------------
-    def process_group(member_ids_sql):
+    def process(member_ids_sql):
 
-        conn = get_connection()
+        conn = get_conn()
 
         query = f"""
-        SELECT DISTINCT
-            MEMBERID as MEMBER_ID,
-            ACCOUNTID,
+        SELECT
+            MEMBERID AS MEMBER_ID,
             CLAIMID,
-            FINAL_PAID_CLAIM,
-            MR_LINE_CASE,
-            MR_LINE,
             MR_LINE_DESC1,
             MR_LINE_DESC2,
             MR_LINE_DESC3,
-            PAID,
-            SVC_STRT_DT,
-            MR_ALLOWED
-        FROM IRADW_UAT.DM_M360.CUDA_CLAIMS MAIN
-        WHERE MAIN.SVC_STRT_DT BETWEEN '20250101' AND '20251231'
+            PAID
+        FROM IRADW_UAT.DM_M360.CUDA_CLAIMS
+        WHERE FINAL_PAID_CLAIM = 'Y'
         AND CLAIM_STATUS = 'FINAL'
-        AND FINAL_PAID_CLAIM = 'Y'
         AND MEMBERID IN {member_ids_sql}
         """
 
         df = pd.read_sql(query, conn)
         conn.close()
 
-        # -----------------------------------
-        # CLEANING
-        # -----------------------------------
+        # CLEAN
         df["PAID"] = pd.to_numeric(df["PAID"], errors="coerce")
-        df["MR_ALLOWED"] = pd.to_numeric(df["MR_ALLOWED"], errors="coerce")
+        df = df.fillna("")
 
-        df["MR_LINE_DESC1"] = df["MR_LINE_DESC1"].fillna("").astype(str)
-        df["MR_LINE_DESC2"] = df["MR_LINE_DESC2"].fillna("").astype(str)
-        df["MR_LINE_DESC3"] = df["MR_LINE_DESC3"].fillna("").astype(str)
+        # BUILD CATEGORY
+        df["SVC_CAT"] = (df["MR_LINE_DESC2"] + "-" + df["MR_LINE_DESC3"]).str.strip("-")
 
-        # -----------------------------------
-        # BUILD SVC_CAT
-        # -----------------------------------
-        df["SVC_CAT"] = (
-            df["MR_LINE_DESC2"] + "-" + df["MR_LINE_DESC3"]
-        )
-
-        # 🔥 FIX TRAILING "-"
-        df["SVC_CAT"] = df["SVC_CAT"].str.strip("-").str.strip()
-
-        svc_upper = df["SVC_CAT"].str.upper()
+        svc = df["SVC_CAT"].str.upper()
         mr = df["MR_LINE_DESC1"]
 
-        # -----------------------------------
-        # CONDITIONS (SAFE BOOLEAN)
-        # -----------------------------------
+        # CATEGORY MAPPING
         conditions = [
-            ((mr == "FIP") & svc_upper.str.contains("ALCOHOL")),
-            ((mr == "FIP") & svc_upper.str.contains("MAT NORM")),
-            ((mr == "FIP") & svc_upper.str.contains("MAT CSECT")),
-            ((mr == "FIP") & svc_upper.str.contains("PSYCHIATRIC")),
-            ((mr == "FIP") & svc_upper.str.contains("NEWBORN")),
-
-            ((mr == "FOP") & svc_upper.str.contains("RADIOLOGY")),
-
-            ((mr == "PROF") & svc_upper.str.contains("INPATIENT VISITS")),
-
-            ((mr == "OTH") & svc_upper.str.contains("HOME HEALTH")),
-
-            ((mr == "ADDL") & svc_upper.str.contains("BENEFITS"))
+            (mr == "FIP") & svc.str.contains("MAT NORM"),
+            (mr == "FIP") & svc.str.contains("MAT CSECT"),
+            (mr == "FOP") & svc.str.contains("RADIOLOGY"),
+            (mr == "PROF"),
+            (mr == "OTH"),
+            (mr == "ADDL")
         ]
 
-        # Ensure boolean arrays
         conditions = [c.fillna(False) for c in conditions]
 
         choices = [
-            "Alcohol and Drug Abuse",
             "Mat Norm Delivery",
             "Mat Csect Delivery",
-            "Psychiatric",
-            "Well Newborn",
             "Radiology",
-            "Inpatient Visits",
-            "Home Health Care",
-            "Benefits Other"
+            "Professional",
+            "Others",
+            "Additional"
         ]
 
-        df["SVC_CAT2"] = np.select(
-            conditions,
-            choices,
-            default=df["SVC_CAT"]
-        )
+        df["SVC_CAT2"] = np.select(conditions, choices, default=df["SVC_CAT"])
 
-        # -----------------------------------
         # FINAL CATEGORY
-        # -----------------------------------
         df["MR_LINE_DESC1_FINAL"] = df["MR_LINE_DESC1"]
 
-        # -----------------------------------
-        # FINAL CLEAN (REMOVE TRAILING "-")
-        # -----------------------------------
+        # CLEAN SUBCATEGORY
         df["SVC_CAT2"] = df["SVC_CAT2"].str.strip("-").str.strip()
 
-        # -----------------------------------
         # AGGREGATION
-        # -----------------------------------
         summary = (
             df.groupby(["MR_LINE_DESC1_FINAL", "SVC_CAT2"])
             .agg(
@@ -157,15 +108,46 @@ def run_summary_pipeline():
             .reset_index()
         )
 
+        # -----------------------------------
+        # SECTION TOTALS
+        # -----------------------------------
+        totals = (
+            summary.groupby("MR_LINE_DESC1_FINAL")
+            .agg(
+                Total_Claim_Count=("Total_Claim_Count", "sum"),
+                Total_Paid_Amount=("Total_Paid_Amount", "sum")
+            )
+            .reset_index()
+        )
+
+        totals["SVC_CAT2"] = totals["MR_LINE_DESC1_FINAL"] + " TOTAL"
+
+        # APPEND TOTAL ROWS
+        summary = pd.concat([summary, totals], ignore_index=True)
+
+        # -----------------------------------
+        # ORDERING
+        # -----------------------------------
+        order = ["FIP", "FOP", "PROF", "OTH", "ADDL"]
+
+        summary["MR_LINE_DESC1_FINAL"] = pd.Categorical(
+            summary["MR_LINE_DESC1_FINAL"],
+            categories=order,
+            ordered=True
+        )
+
+        summary = summary.sort_values(
+            ["MR_LINE_DESC1_FINAL", "SVC_CAT2"]
+        ).reset_index(drop=True)
+
+        summary.index = summary.index + 1
+
         return summary
 
-    # -----------------------------------
-    # RUN BOTH GROUPS
-    # -----------------------------------
-    Summary_Group1 = process_group(g1_ids_sql)
-    Summary_Group2 = process_group(g2_ids_sql)
+    g1 = process(g1_ids_sql)
+    g2 = process(g2_ids_sql)
 
-    Summary_Group1["GROUP"] = "Group1"
-    Summary_Group2["GROUP"] = "Group2"
+    g1["GROUP"] = "Group1"
+    g2["GROUP"] = "Group2"
 
-    return Summary_Group1, Summary_Group2
+    return g1, g2
