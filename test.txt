@@ -139,7 +139,44 @@ if page == "📊 Matched Cohort Dashboard":
     with col2:
         render_kpis("Group2", k2)
 
+    # -----------------------------------
+    # ANALYSIS
+    # -----------------------------------
+    st.markdown("## 📈 Analysis")
 
+    selected_prompt = st.selectbox("Select Analysis", PROMPTS)
+
+    result = run_prompt(selected_prompt, filtered)
+
+    fig = build_chart(result, selected_prompt)
+    st.plotly_chart(fig, use_container_width=True)
+
+    # -----------------------------------
+    # INSIGHTS
+    # -----------------------------------
+    st.markdown("## 🧠 Insights")
+
+    for ins in generate_insights(selected_prompt, result):
+        st.write("•", ins)
+
+    # -----------------------------------
+    # DATA TABLE
+    # -----------------------------------
+    st.markdown("## 📄 Data Sample")
+
+    display_df = result.copy()
+
+    if "MEMBER_ID" in display_df.columns:
+        display_df = display_df.drop(columns=["MEMBER_ID"])
+
+    for col in display_df.columns:
+        if display_df[col].dtype in ["int64", "float64"] and col != "MONTH":
+            display_df[col] = display_df[col].apply(
+                lambda x: f"${x:,.0f}" if pd.notnull(x) else x
+            )
+
+    st.dataframe(display_df.head(50))
+    
 # ============================================================
 # 📈 PAGE 2 (INDEX FIXED)
 # ============================================================
