@@ -1,5 +1,5 @@
 # -----------------------------------
-# 📅 TIME WINDOW FILTER (FIXED)
+# 📅 TIME WINDOW FILTER (FINAL FIX)
 # -----------------------------------
 st.markdown("### 📅 Select Time Range")
 
@@ -9,29 +9,35 @@ time_range = st.selectbox(
     index=2
 )
 
-if "SVC_STRT_DT" in filtered.columns:
+# -----------------------------------
+# USE YYYYMM COLUMN (CRITICAL FIX)
+# -----------------------------------
+if "ELIGIBILITYYEARMONTH" in filtered.columns:
 
-    # Ensure datetime
-    filtered["SVC_STRT_DT"] = pd.to_datetime(filtered["SVC_STRT_DT"], errors="coerce")
+    # Convert to integer safely
+    filtered["ELIGIBILITYYEARMONTH"] = pd.to_numeric(
+        filtered["ELIGIBILITYYEARMONTH"], errors="coerce"
+    )
 
-    # Only consider rows with valid dates (actual claims)
-    valid_dates = filtered["SVC_STRT_DT"].dropna()
+    # Get max month
+    max_ym = int(filtered["ELIGIBILITYYEARMONTH"].max())
 
-    if not valid_dates.empty:
+    # Convert YYYYMM → datetime
+    max_date = pd.to_datetime(str(max_ym), format="%Y%m")
 
-        max_date = valid_dates.max()
+    # Define window
+    if time_range == "Last 3 Months":
+        start_date = max_date - pd.DateOffset(months=3)
+    elif time_range == "Last 6 Months":
+        start_date = max_date - pd.DateOffset(months=6)
+    else:
+        start_date = max_date - pd.DateOffset(months=12)
 
-        if time_range == "Last 3 Months":
-            start_date = max_date - pd.DateOffset(months=3)
-        elif time_range == "Last 6 Months":
-            start_date = max_date - pd.DateOffset(months=6)
-        else:
-            start_date = max_date - pd.DateOffset(months=12)
+    start_ym = int(start_date.strftime("%Y%m"))
 
-        # 🔥 FILTER CLAIMS ONLY (IMPORTANT)
-        filtered = filtered[
-            (filtered["SVC_STRT_DT"].isna()) |  # keep no-claim members
-            (filtered["SVC_STRT_DT"] >= start_date)
-        ]
+    # 🔥 FILTER USING YYYYMM
+    filtered = filtered[
+        filtered["ELIGIBILITYYEARMONTH"] >= start_ym
+    ]
 
-        st.caption(f"Showing data from {start_date.date()} to {max_date.date()}")
+    st.caption(f"Showing data from {start_ym} to {max_ym}")
