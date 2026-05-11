@@ -1,3 +1,64 @@
+# core/matched_data_loader.py
+
+import pandas as pd
+
+
+def load_matched_datasets(df, matched_df):
+    """
+    Ensures all matched members are retained (LEFT JOIN behavior),
+    even if they have no claims after filtering.
+    """
+
+    # -----------------------------------
+    # BASE MEMBER LIST (ALL MATCHED MEMBERS)
+    # -----------------------------------
+    g1_members = (
+        matched_df[["G1_MEMBER_ID"]]
+        .drop_duplicates()
+        .rename(columns={"G1_MEMBER_ID": "MEMBER_ID"})
+    )
+    g1_members["GROUP"] = "Group1"
+
+    g2_members = (
+        matched_df[["G2_MEMBER_ID"]]
+        .drop_duplicates()
+        .rename(columns={"G2_MEMBER_ID": "MEMBER_ID"})
+    )
+    g2_members["GROUP"] = "Group2"
+
+    # -----------------------------------
+    # LEFT JOIN CLAIMS DATA
+    # -----------------------------------
+    g1_data = pd.merge(
+        g1_members,
+        df,
+        on="MEMBER_ID",
+        how="left"
+    )
+
+    g2_data = pd.merge(
+        g2_members,
+        df,
+        on="MEMBER_ID",
+        how="left"
+    )
+
+    # -----------------------------------
+    # FILL NULLS FOR MEMBERS WITH NO CLAIMS
+    # -----------------------------------
+    numeric_cols = ["PAID", "MEDICAL_PAID", "RX_PAID", "EDVISITS", "IPVISITS"]
+
+    for col in numeric_cols:
+        if col in g1_data.columns:
+            g1_data[col] = g1_data[col].fillna(0)
+            g2_data[col] = g2_data[col].fillna(0)
+
+    # Keep consistent column order
+    g1_data["GROUP"] = "Group1"
+    g2_data["GROUP"] = "Group2"
+
+    return g1_data, g2_data, matched_df
+
 import streamlit as st
 import pandas as pd
 import plotly.express as px
@@ -48,7 +109,7 @@ page = st.sidebar.radio(
 
 
 # ============================================================
-# 📊 PAGE 1 (UNCHANGED)
+# 📊 PAGE 1
 # ============================================================
 if page == "📊 Matched Cohort Dashboard":
 
@@ -67,6 +128,9 @@ if page == "📊 Matched Cohort Dashboard":
     df = load_data()
     matched = get_matched()
 
+    # -----------------------------------
+    # MATCHING QUALITY
+    # -----------------------------------
     st.markdown("## 🎛 Matching Quality")
 
     caliper_counts = matched["caliper_used"].value_counts().to_dict()
@@ -96,20 +160,31 @@ if page == "📊 Matched Cohort Dashboard":
     for k, v in CALIPER_DESC.items():
         st.markdown(f"**{k}** — {v}")
 
+    # -----------------------------------
+    # MATCH SUMMARY
+    # -----------------------------------
     colA, colB, colC = st.columns(3)
     colA.metric("Total Matches", len(filtered_matched))
     colB.metric("Group1 Members", filtered_matched["G1_MEMBER_ID"].nunique())
     colC.metric("Group2 Members", filtered_matched["G2_MEMBER_ID"].nunique())
 
+    # -----------------------------------
+    # LOAD MATCHED DATA (LEFT JOIN FIX)
+    # -----------------------------------
     g1_data, g2_data, _ = load_matched_datasets(df, filtered_matched)
     combined = pd.concat([g1_data, g2_data])
 
     filters = render_filter_ui(combined)
     filtered = apply_filters_cached(combined, filters)
 
+    # -----------------------------------
+    # KPI CALCULATION (UPDATED)
+    # -----------------------------------
     def compute_kpis(df, matched_df, group):
-        members = matched_df["G1_MEMBER_ID"].nunique() if group == "Group1" else matched_df["G2_MEMBER_ID"].nunique()
+        # All members retained due to LEFT JOIN
+        members = df["MEMBER_ID"].nunique()
         total = df["PAID"].sum()
+
         return {
             "Members": members,
             "Total Cost": total,
@@ -123,6 +198,9 @@ if page == "📊 Matched Cohort Dashboard":
     k1 = compute_kpis(filtered[filtered["GROUP"] == "Group1"], filtered_matched, "Group1")
     k2 = compute_kpis(filtered[filtered["GROUP"] == "Group2"], filtered_matched, "Group2")
 
+    # -----------------------------------
+    # KPI DISPLAY
+    # -----------------------------------
     st.markdown("## 📊 Key Metrics Overview")
 
     col1, col2 = st.columns(2)
@@ -130,6 +208,7 @@ if page == "📊 Matched Cohort Dashboard":
     def render_kpis(title, kpi):
         st.markdown(f"### {title}")
         cols = st.columns(4)
+
         for i, (key, val) in enumerate(kpi.items()):
             value = f"${val:,.0f}" if "Cost" in key or key == "PMPM" else f"{int(val):,}"
             cols[i % 4].metric(key, value)
@@ -160,7 +239,7 @@ if page == "📊 Matched Cohort Dashboard":
         st.write("•", ins)
 
     # -----------------------------------
-    # DATA TABLE
+    # DATA SAMPLE
     # -----------------------------------
     st.markdown("## 📄 Data Sample")
 
@@ -176,9 +255,10 @@ if page == "📊 Matched Cohort Dashboard":
             )
 
     st.dataframe(display_df.head(50))
-    
+
+
 # ============================================================
-# 📈 PAGE 2 (INDEX FIXED)
+# 📈 PAGE 2 (UNCHANGED)
 # ============================================================
 elif page == "📈 Utilization & Cost Comparison":
 
@@ -208,7 +288,6 @@ elif page == "📈 Utilization & Cost Comparison":
     pivot.columns = [f"{m}_{g}" for m, g in pivot.columns]
     pivot = pivot.reset_index()
 
-    # DELTA
     def pct_diff(a, b):
         return ((a - b) / b * 100) if b != 0 else 0
 
@@ -229,7 +308,6 @@ elif page == "📈 Utilization & Cost Comparison":
         "Total_Claim_Count_Group2": "G2 Claim Count"
     })
 
-    # FORMAT
     pivot["G1 Paid"] = pivot["G1 Paid"].apply(lambda x: f"${x:,.0f}")
     pivot["G2 Paid"] = pivot["G2 Paid"].apply(lambda x: f"${x:,.0f}")
     pivot["G1 Claim Count"] = pivot["G1 Claim Count"].astype(int)
@@ -244,7 +322,6 @@ elif page == "📈 Utilization & Cost Comparison":
         "Cost Δ%", "Utilization Δ%"
     ]
 
-    # ORDER FIX
     category_order = ["FIP", "FOP", "PROF", "OTH", "ADDL"]
     pivot["Category"] = pd.Categorical(pivot["Category"], categories=category_order, ordered=True)
     pivot = pivot.sort_values(["Category", "Subcategory"])
@@ -264,7 +341,7 @@ elif page == "📈 Utilization & Cost Comparison":
 
         if not seg_df.empty:
             seg_df = seg_df.reset_index(drop=True)
-            seg_df.index = seg_df.index + 1   # 🔥 FIX: proper numbering
+            seg_df.index = seg_df.index + 1
             st.dataframe(seg_df, use_container_width=True)
         else:
             st.info(f"No data available for {title}")
