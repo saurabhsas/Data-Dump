@@ -1,5 +1,5 @@
 # -----------------------------------
-# 📅 TIME WINDOW FILTER (NEW)
+# 📅 TIME WINDOW FILTER (FIXED)
 # -----------------------------------
 st.markdown("### 📅 Select Time Range")
 
@@ -9,13 +9,17 @@ time_range = st.selectbox(
     index=2
 )
 
-# Ensure date column is datetime
 if "SVC_STRT_DT" in filtered.columns:
+
+    # Ensure datetime
     filtered["SVC_STRT_DT"] = pd.to_datetime(filtered["SVC_STRT_DT"], errors="coerce")
 
-    max_date = filtered["SVC_STRT_DT"].max()
+    # Only consider rows with valid dates (actual claims)
+    valid_dates = filtered["SVC_STRT_DT"].dropna()
 
-    if pd.notnull(max_date):
+    if not valid_dates.empty:
+
+        max_date = valid_dates.max()
 
         if time_range == "Last 3 Months":
             start_date = max_date - pd.DateOffset(months=3)
@@ -24,6 +28,10 @@ if "SVC_STRT_DT" in filtered.columns:
         else:
             start_date = max_date - pd.DateOffset(months=12)
 
+        # 🔥 FILTER CLAIMS ONLY (IMPORTANT)
         filtered = filtered[
-            filtered["SVC_STRT_DT"] >= start_date
+            (filtered["SVC_STRT_DT"].isna()) |  # keep no-claim members
+            (filtered["SVC_STRT_DT"] >= start_date)
         ]
+
+        st.caption(f"Showing data from {start_date.date()} to {max_date.date()}")
