@@ -1,43 +1,21 @@
 # -----------------------------------
-# 📅 TIME WINDOW FILTER (FINAL FIX)
+# 🧪 DEBUG: CHECK FILTERED DATA
 # -----------------------------------
-st.markdown("### 📅 Select Time Range")
+st.markdown("### 🧪 Debug - Filtered Data")
 
-time_range = st.selectbox(
-    "Select Period",
-    ["Last 3 Months", "Last 6 Months", "Last 12 Months"],
-    index=2
-)
+st.write("Shape:", filtered.shape)
 
-# -----------------------------------
-# USE YYYYMM COLUMN (CRITICAL FIX)
-# -----------------------------------
+st.write("Columns:")
+st.write(filtered.columns.tolist())
+
+st.write("Sample Data:")
+st.dataframe(filtered.head(20))
+
+st.write("ELIGIBILITYYEARMONTH Summary:")
 if "ELIGIBILITYYEARMONTH" in filtered.columns:
+    st.write(filtered["ELIGIBILITYYEARMONTH"].describe())
 
-    # Convert to integer safely
-    filtered["ELIGIBILITYYEARMONTH"] = pd.to_numeric(
-        filtered["ELIGIBILITYYEARMONTH"], errors="coerce"
-    )
-
-    # Get max month
-    max_ym = int(filtered["ELIGIBILITYYEARMONTH"].max())
-
-    # Convert YYYYMM → datetime
-    max_date = pd.to_datetime(str(max_ym), format="%Y%m")
-
-    # Define window
-    if time_range == "Last 3 Months":
-        start_date = max_date - pd.DateOffset(months=3)
-    elif time_range == "Last 6 Months":
-        start_date = max_date - pd.DateOffset(months=6)
-    else:
-        start_date = max_date - pd.DateOffset(months=12)
-
-    start_ym = int(start_date.strftime("%Y%m"))
-
-    # 🔥 FILTER USING YYYYMM
-    filtered = filtered[
-        filtered["ELIGIBILITYYEARMONTH"] >= start_ym
-    ]
-
-    st.caption(f"Showing data from {start_ym} to {max_ym}")
+    st.write("Unique Months:")
+    st.write(sorted(filtered["ELIGIBILITYYEARMONTH"].dropna().unique())[:20])
+else:
+    st.warning("ELIGIBILITYYEARMONTH column NOT found")
