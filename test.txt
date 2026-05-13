@@ -21,6 +21,22 @@ from utils.constants import PROMPTS
 
 
 # ============================================================
+# 🔧 FORMATTERS (FIX HTML ISSUE)
+# ============================================================
+def format_currency(x):
+    try:
+        return f"${float(x):,.0f}"
+    except:
+        return str(x)
+
+def format_number(x):
+    try:
+        return f"{int(x):,}"
+    except:
+        return str(x)
+
+
+# ============================================================
 # 📊 PPT GENERATION FUNCTION
 # ============================================================
 def generate_ppt(matched, k1, k2, result, insights, data_sample, summary_df=None):
@@ -34,9 +50,9 @@ def generate_ppt(matched, k1, k2, result, insights, data_sample, summary_df=None
     slide.shapes.title.text = "Matching Quality"
 
     slide.placeholders[1].text = f"""
-Total Matches: {len(matched)}
-Group1 Members: {matched['G1_MEMBER_ID'].nunique()}
-Group2 Members: {matched['G2_MEMBER_ID'].nunique()}
+Total Matches: {format_number(len(matched))}
+Group1 Members: {format_number(matched['G1_MEMBER_ID'].nunique())}
+Group2 Members: {format_number(matched['G2_MEMBER_ID'].nunique())}
 """
 
     # -----------------------------
@@ -46,10 +62,17 @@ Group2 Members: {matched['G2_MEMBER_ID'].nunique()}
     slide.shapes.title.text = "Key Metrics Overview"
 
     slide.placeholders[1].text = f"""
-Group1 Cost: {k1.get('Total Cost',0)}
-Group2 Cost: {k2.get('Total Cost',0)}
-Group1 PMPM: {k1.get('PMPM',0)}
-Group2 PMPM: {k2.get('PMPM',0)}
+GROUP 1
+-------------------
+Members: {format_number(k1.get('Members',0))}
+Total Cost: {format_currency(k1.get('Total Cost',0))}
+PMPM: {format_currency(k1.get('PMPM',0))}
+
+GROUP 2
+-------------------
+Members: {format_number(k2.get('Members',0))}
+Total Cost: {format_currency(k2.get('Total Cost',0))}
+PMPM: {format_currency(k2.get('PMPM',0))}
 """
 
     # -----------------------------
@@ -69,7 +92,7 @@ Group2 PMPM: {k2.get('PMPM',0)}
     slide.placeholders[1].text = str(data_sample.head(10))
 
     # -----------------------------
-    # Slide 5+: Utilization Segments
+    # Category Slides (Optional)
     # -----------------------------
     if summary_df is not None and not summary_df.empty:
 
@@ -86,10 +109,8 @@ Group2 PMPM: {k2.get('PMPM',0)}
             slide.shapes.title.text = title
 
             seg_df = summary_df[summary_df["Category"] == code]
-
             slide.placeholders[1].text = str(seg_df.head(15))
 
-    # Save file
     tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".pptx")
     prs.save(tmp.name)
 
@@ -200,7 +221,7 @@ if page == "📊 Matched Cohort Dashboard":
     st.dataframe(result.head(20))
 
     # ============================================================
-    # 📥 PPT EXPORT (CORRECT SCOPE)
+    # 📥 PPT EXPORT (FINAL)
     # ============================================================
     st.markdown("## 📥 Export")
 
