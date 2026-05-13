@@ -1,229 +1,108 @@
-# (imports unchanged)
-import streamlit as st
-import pandas as pd
-import plotly.express as px
-import os
+def generate_ppt(matched, k1, k2, result, insights, data_sample, summary_df):
+    prs = Presentation()
 
-from core.data_loader import load_data
-from core.filters import render_filter_ui, apply_filters_cached
-from core.query_router import run_prompt
-from core.insights_engine import generate_insights
+    # -----------------------------
+    # SLIDE 1: MATCHING QUALITY
+    # -----------------------------
+    slide_layout = prs.slides.add_slide(prs.slide_layouts[1])
+    title = slide.shapes.title
+    content = slide.placeholders[1]
 
-from core.group_match_loader import load_group_match_data
-from core.matching_engine import multi_caliper_matching
-from core.matched_data_loader import load_matched_datasets
+    title.text = "Matching Quality"
+    content.text = f"""
+Total Matches: {len(matched)}
+Group1 Members: {matched['G1_MEMBER_ID'].nunique()}
+Group2 Members: {matched['G2_MEMBER_ID'].nunique()}
+"""
 
-from core.summary_loader import load_summary_data
+    # -----------------------------
+    # SLIDE 2: KPI
+    # -----------------------------
+    slide = prs.slides.add_slide(prs.slide_layouts[1])
+    title = slide.shapes.title
+    content = slide.placeholders[1]
 
-from visualization.chart_router import build_chart
-from utils.constants import PROMPTS
+    title.text = "Key Metrics Overview"
+    content.text = f"""
+Group1 Cost: {k1['Total Cost']}
+Group2 Cost: {k2['Total Cost']}
+Group1 PMPM: {k1['PMPM']}
+Group2 PMPM: {k2['PMPM']}
+"""
+
+    # -----------------------------
+    # SLIDE 3: ANALYSIS + INSIGHTS
+    # -----------------------------
+    slide = prs.slides.add_slide(prs.slide_layouts[1])
+    title = slide.shapes.title
+    content = slide.placeholders[1]
+
+    title.text = "Analysis & Insights"
+
+    insight_text = "\n".join(insights[:5])
+    content.text = insight_text
+
+    # -----------------------------
+    # SLIDE 4: DATA SAMPLE
+    # -----------------------------
+    slide = prs.slides.add_slide(prs.slide_layouts[1])
+    title = slide.shapes.title
+    content = slide.placeholders[1]
+
+    title.text = "Data Sample"
+    content.text = str(data_sample.head(10))
+
+    # -----------------------------
+    # FUNCTION FOR CATEGORY SLIDES
+    # -----------------------------
+    def add_category_slide(name, df):
+        slide = prs.slides.add_slide(prs.slide_layouts[1])
+        slide.shapes.title.text = name
+        slide.placeholders[1].text = str(df.head(15))
+
+    # -----------------------------
+    # CATEGORY SPLIT
+    # -----------------------------
+    if summary_df is not None and not summary_df.empty:
+
+        add_category_slide("FIP - Inpatient", summary_df[summary_df["Category"] == "FIP"])
+        add_category_slide("FOP - Outpatient", summary_df[summary_df["Category"] == "FOP"])
+        add_category_slide("PROF - Professional", summary_df[summary_df["Category"] == "PROF"])
+        add_category_slide("OTH - Others", summary_df[summary_df["Category"] == "OTH"])
+        add_category_slide("ADDL - Additional", summary_df[summary_df["Category"] == "ADDL"])
+
+    # -----------------------------
+    # SAVE FILE
+    # -----------------------------
+    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".pptx")
+    prs.save(tmp.name)
+
+    return tmp.name
 
 
-st.set_page_config(layout="wide")
-st.title("🏥 Matched Cohort Analytics Dashboard")
 
 
-st.markdown("""
-<style>
-div[data-testid="stMetricValue"] {
-    font-size: 18px !important;
-    font-weight: 600;
-}
-</style>
-""", unsafe_allow_html=True)
 
 
-page = st.sidebar.radio(
-    "Navigation",
-    ["📊 Matched Cohort Dashboard", "📈 Utilization & Cost Comparison"]
-)
 
+st.markdown("## 📥 Export")
 
-# ============================================================
-# 📊 PAGE 1
-# ============================================================
-if page == "📊 Matched Cohort Dashboard":
+if st.button("Download PPT"):
 
-    @st.cache_data(show_spinner=False)
-    def get_matched():
-        g1, g2 = load_group_match_data()
-        matched = multi_caliper_matching(g1, g2)
-
-        os.makedirs("data", exist_ok=True)
-        matched[["G1_MEMBER_ID", "G2_MEMBER_ID"]].to_csv(
-            "data/matched_members.csv",
-            index=False
-        )
-        return matched
-
-    df = load_data()
-    matched = get_matched()
-
-    # -----------------------------------
-    # MATCHING QUALITY
-    # -----------------------------------
-    st.markdown("## 🎛 Matching Quality")
-
-    caliper_counts = matched["caliper_used"].value_counts().to_dict()
-
-    CALIPER_DESC = {
-        "1e-05": f"Very Strict — Matches: {caliper_counts.get('1e-05',0)}",
-        "0.0001": f"Strict — Matches: {caliper_counts.get('0.0001',0)}",
-        "0.001": f"Moderate — Matches: {caliper_counts.get('0.001',0)}",
-        "0.02": f"Loose — Matches: {caliper_counts.get('0.02',0)}",
-        "no_caliper": f"Fallback — Matches: {caliper_counts.get('no_caliper',0)}"
-    }
-
-    available_calipers = ["ALL"] + sorted(matched["caliper_used"].unique())
-
-    selected = st.multiselect(
-        "Select Matching Precision Levels",
-        options=available_calipers,
-        default=["ALL"],
-        format_func=lambda x: "ALL" if x == "ALL" else f"{x} → {CALIPER_DESC.get(x,'')}"
+    ppt_file = generate_ppt(
+        matched=filtered_matched,
+        k1=k1,
+        k2=k2,
+        result=result,
+        insights=generate_insights(selected_prompt, result),
+        data_sample=filtered,
+        summary_df=None  # optional: pass summary data if available
     )
 
-    filtered_matched = matched if "ALL" in selected else matched[
-        matched["caliper_used"].isin(selected)
-    ]
-
-    colA, colB, colC = st.columns(3)
-    colA.metric("Total Matches", len(filtered_matched))
-    colB.metric("Group1 Members", filtered_matched["G1_MEMBER_ID"].nunique())
-    colC.metric("Group2 Members", filtered_matched["G2_MEMBER_ID"].nunique())
-
-    # -----------------------------------
-    # LOAD DATA
-    # -----------------------------------
-    g1_data, g2_data, _ = load_matched_datasets(df, filtered_matched)
-    combined = pd.concat([g1_data, g2_data])
-
-    # ============================================================
-    # 📅 FIRST N MONTHS FILTER (FINAL CORRECT LOGIC)
-    # ============================================================
-    st.markdown("### 📅 Select Time Range")
-
-    time_range = st.selectbox(
-        "Select Period",
-        ["First 3 Months", "First 6 Months", "First 9 Months", "First 12 Months"],
-        index=3
-    )
-
-    filtered = combined.copy()
-
-    if "ELIGIBILITYYEARMONTH" in filtered.columns:
-
-        # CLEAN
-        filtered["ELIGIBILITYYEARMONTH"] = (
-            filtered["ELIGIBILITYYEARMONTH"]
-            .astype(str)
-            .str.replace(".0", "", regex=False)
-            .astype(int)
+    with open(ppt_file, "rb") as f:
+        st.download_button(
+            label="Download PPT",
+            data=f,
+            file_name="dashboard_export.pptx",
+            mime="application/vnd.openxmlformats-officedocument.presentationml.presentation"
         )
-
-        # CONVERT
-        filtered["ELIG_DT"] = pd.to_datetime(
-            filtered["ELIGIBILITYYEARMONTH"].astype(str),
-            format="%Y%m",
-            errors="coerce"
-        )
-
-        # MEMBER START
-        member_start = (
-            filtered.groupby("MEMBER_ID")["ELIG_DT"]
-            .min()
-            .reset_index()
-            .rename(columns={"ELIG_DT": "START_DT"})
-        )
-
-        filtered = filtered.merge(member_start, on="MEMBER_ID", how="left")
-
-        # WINDOW SIZE
-        months_map = {
-            "First 3 Months": 3,
-            "First 6 Months": 6,
-            "First 9 Months": 9,
-            "First 12 Months": 12
-        }
-
-        months = months_map[time_range]
-
-        filtered["END_DT"] = filtered["START_DT"] + pd.DateOffset(months=months)
-
-        # FILTER
-        filtered = filtered[
-            (filtered["ELIG_DT"] >= filtered["START_DT"]) &
-            (filtered["ELIG_DT"] < filtered["END_DT"])
-        ].copy()
-
-        st.caption(f"Using first {months} months from each member's enrollment")
-
-    # -----------------------------------
-    # APPLY UI FILTERS
-    # -----------------------------------
-    filters = render_filter_ui(filtered)
-    filtered = apply_filters_cached(filtered, filters)
-
-    # -----------------------------------
-    # KPI
-    # -----------------------------------
-    def compute_kpis(df, matched_df, group):
-        members = df["MEMBER_ID"].nunique()
-        total = df["PAID"].sum()
-
-        return {
-            "Members": members,
-            "Total Cost": total,
-            "Medical Cost": df["MEDICAL_PAID"].sum(),
-            "Pharmacy Cost": df["RX_PAID"].sum(),
-            "ED Visits": df["EDVISITS"].sum(),
-            "IP Visits": df["IPVISITS"].sum(),
-            "PMPM": total / members if members else 0
-        }
-
-    k1 = compute_kpis(filtered[filtered["GROUP"] == "Group1"], filtered_matched, "Group1")
-    k2 = compute_kpis(filtered[filtered["GROUP"] == "Group2"], filtered_matched, "Group2")
-
-    st.markdown("## 📊 Key Metrics Overview")
-
-    col1, col2 = st.columns(2)
-
-    def render_kpis(title, kpi):
-        st.markdown(f"### {title}")
-        cols = st.columns(4)
-
-        for i, (key, val) in enumerate(kpi.items()):
-            value = f"${val:,.0f}" if "Cost" in key or key == "PMPM" else f"{int(val):,}"
-            cols[i % 4].metric(key, value)
-
-    with col1:
-        render_kpis("Group1", k1)
-    with col2:
-        render_kpis("Group2", k2)
-
-    # -----------------------------------
-    # ANALYSIS
-    # -----------------------------------
-    st.markdown("## 📈 Analysis")
-
-    selected_prompt = st.selectbox("Select Analysis", PROMPTS)
-
-    result = run_prompt(selected_prompt, filtered)
-
-    if "MONTH" in result.columns:
-        result["MONTH"] = result["MONTH"].astype(str).str.replace(".0", "", regex=False)
-
-    fig = build_chart(result, selected_prompt)
-    st.plotly_chart(fig, use_container_width=True)
-
-    st.markdown("## 🧠 Insights")
-    for ins in generate_insights(selected_prompt, result):
-        st.write("•", ins)
-
-    st.markdown("## 📄 Data Sample")
-    display_df = result.copy()
-
-    if "MEMBER_ID" in display_df.columns:
-        display_df = display_df.drop(columns=["MEMBER_ID"])
-
-    st.dataframe(display_df.head(50))
