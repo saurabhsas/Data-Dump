@@ -1,108 +1,240 @@
-def generate_ppt(matched, k1, k2, result, insights, data_sample, summary_df):
+import streamlit as st
+import pandas as pd
+import plotly.express as px
+import os
+import tempfile
+
+from pptx import Presentation
+
+from core.data_loader import load_data
+from core.filters import render_filter_ui, apply_filters_cached
+from core.query_router import run_prompt
+from core.insights_engine import generate_insights
+
+from core.group_match_loader import load_group_match_data
+from core.matching_engine import multi_caliper_matching
+from core.matched_data_loader import load_matched_datasets
+
+from core.summary_loader import load_summary_data
+from visualization.chart_router import build_chart
+from utils.constants import PROMPTS
+
+
+# ============================================================
+# 📊 PPT GENERATION FUNCTION
+# ============================================================
+def generate_ppt(matched, k1, k2, result, insights, data_sample, summary_df=None):
+
     prs = Presentation()
 
     # -----------------------------
-    # SLIDE 1: MATCHING QUALITY
+    # Slide 1: Matching Quality
     # -----------------------------
-    slide_layout = prs.slides.add_slide(prs.slide_layouts[1])
-    title = slide.shapes.title
-    content = slide.placeholders[1]
+    slide = prs.slides.add_slide(prs.slide_layouts[1])
+    slide.shapes.title.text = "Matching Quality"
 
-    title.text = "Matching Quality"
-    content.text = f"""
+    slide.placeholders[1].text = f"""
 Total Matches: {len(matched)}
 Group1 Members: {matched['G1_MEMBER_ID'].nunique()}
 Group2 Members: {matched['G2_MEMBER_ID'].nunique()}
 """
 
     # -----------------------------
-    # SLIDE 2: KPI
+    # Slide 2: KPI
     # -----------------------------
     slide = prs.slides.add_slide(prs.slide_layouts[1])
-    title = slide.shapes.title
-    content = slide.placeholders[1]
+    slide.shapes.title.text = "Key Metrics Overview"
 
-    title.text = "Key Metrics Overview"
-    content.text = f"""
-Group1 Cost: {k1['Total Cost']}
-Group2 Cost: {k2['Total Cost']}
-Group1 PMPM: {k1['PMPM']}
-Group2 PMPM: {k2['PMPM']}
+    slide.placeholders[1].text = f"""
+Group1 Cost: {k1.get('Total Cost',0)}
+Group2 Cost: {k2.get('Total Cost',0)}
+Group1 PMPM: {k1.get('PMPM',0)}
+Group2 PMPM: {k2.get('PMPM',0)}
 """
 
     # -----------------------------
-    # SLIDE 3: ANALYSIS + INSIGHTS
+    # Slide 3: Analysis & Insights
     # -----------------------------
     slide = prs.slides.add_slide(prs.slide_layouts[1])
-    title = slide.shapes.title
-    content = slide.placeholders[1]
+    slide.shapes.title.text = "Analysis & Insights"
 
-    title.text = "Analysis & Insights"
-
-    insight_text = "\n".join(insights[:5])
-    content.text = insight_text
+    slide.placeholders[1].text = "\n".join([str(i) for i in insights[:6]])
 
     # -----------------------------
-    # SLIDE 4: DATA SAMPLE
+    # Slide 4: Data Sample
     # -----------------------------
     slide = prs.slides.add_slide(prs.slide_layouts[1])
-    title = slide.shapes.title
-    content = slide.placeholders[1]
+    slide.shapes.title.text = "Data Sample"
 
-    title.text = "Data Sample"
-    content.text = str(data_sample.head(10))
+    slide.placeholders[1].text = str(data_sample.head(10))
 
     # -----------------------------
-    # FUNCTION FOR CATEGORY SLIDES
-    # -----------------------------
-    def add_category_slide(name, df):
-        slide = prs.slides.add_slide(prs.slide_layouts[1])
-        slide.shapes.title.text = name
-        slide.placeholders[1].text = str(df.head(15))
-
-    # -----------------------------
-    # CATEGORY SPLIT
+    # Slide 5+: Utilization Segments
     # -----------------------------
     if summary_df is not None and not summary_df.empty:
 
-        add_category_slide("FIP - Inpatient", summary_df[summary_df["Category"] == "FIP"])
-        add_category_slide("FOP - Outpatient", summary_df[summary_df["Category"] == "FOP"])
-        add_category_slide("PROF - Professional", summary_df[summary_df["Category"] == "PROF"])
-        add_category_slide("OTH - Others", summary_df[summary_df["Category"] == "OTH"])
-        add_category_slide("ADDL - Additional", summary_df[summary_df["Category"] == "ADDL"])
+        segments = {
+            "FIP - Inpatient": "FIP",
+            "FOP - Outpatient": "FOP",
+            "PROF - Professional": "PROF",
+            "OTH - Others": "OTH",
+            "ADDL - Additional": "ADDL"
+        }
 
-    # -----------------------------
-    # SAVE FILE
-    # -----------------------------
+        for title, code in segments.items():
+            slide = prs.slides.add_slide(prs.slide_layouts[1])
+            slide.shapes.title.text = title
+
+            seg_df = summary_df[summary_df["Category"] == code]
+
+            slide.placeholders[1].text = str(seg_df.head(15))
+
+    # Save file
     tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".pptx")
     prs.save(tmp.name)
 
     return tmp.name
 
 
+# ============================================================
+# PAGE CONFIG
+# ============================================================
+st.set_page_config(layout="wide")
+st.title("🏥 Matched Cohort Analytics Dashboard")
 
 
+page = st.sidebar.radio(
+    "Navigation",
+    ["📊 Matched Cohort Dashboard", "📈 Utilization & Cost Comparison"]
+)
 
 
+# ============================================================
+# 📊 PAGE 1
+# ============================================================
+if page == "📊 Matched Cohort Dashboard":
 
-st.markdown("## 📥 Export")
+    @st.cache_data(show_spinner=False)
+    def get_matched():
+        g1, g2 = load_group_match_data()
+        matched = multi_caliper_matching(g1, g2)
 
-if st.button("Download PPT"):
+        os.makedirs("data", exist_ok=True)
+        matched[["G1_MEMBER_ID", "G2_MEMBER_ID"]].to_csv(
+            "data/matched_members.csv", index=False
+        )
+        return matched
 
-    ppt_file = generate_ppt(
-        matched=filtered_matched,
-        k1=k1,
-        k2=k2,
-        result=result,
-        insights=generate_insights(selected_prompt, result),
-        data_sample=filtered,
-        summary_df=None  # optional: pass summary data if available
+    df = load_data()
+    matched = get_matched()
+
+    # -----------------------------
+    # Matching Filter
+    # -----------------------------
+    selected = st.multiselect(
+        "Select Matching Precision Levels",
+        options=["ALL"] + sorted(matched["caliper_used"].unique()),
+        default=["ALL"]
     )
 
-    with open(ppt_file, "rb") as f:
-        st.download_button(
-            label="Download PPT",
-            data=f,
-            file_name="dashboard_export.pptx",
-            mime="application/vnd.openxmlformats-officedocument.presentationml.presentation"
+    filtered_matched = matched if "ALL" in selected else matched[
+        matched["caliper_used"].isin(selected)
+    ]
+
+    st.write("Total Matches:", len(filtered_matched))
+
+    # -----------------------------
+    # Load Data
+    # -----------------------------
+    g1_data, g2_data, _ = load_matched_datasets(df, filtered_matched)
+    combined = pd.concat([g1_data, g2_data])
+
+    # -----------------------------
+    # Filters
+    # -----------------------------
+    filters = render_filter_ui(combined)
+    filtered = apply_filters_cached(combined, filters)
+
+    # -----------------------------
+    # KPI
+    # -----------------------------
+    def compute_kpis(df):
+        members = df["MEMBER_ID"].nunique()
+        total = df["PAID"].sum()
+
+        return {
+            "Members": members,
+            "Total Cost": total,
+            "PMPM": total / members if members else 0
+        }
+
+    k1 = compute_kpis(filtered[filtered["GROUP"] == "Group1"])
+    k2 = compute_kpis(filtered[filtered["GROUP"] == "Group2"])
+
+    st.markdown("## 📊 Key Metrics Overview")
+    st.write("Group1:", k1)
+    st.write("Group2:", k2)
+
+    # -----------------------------
+    # Analysis
+    # -----------------------------
+    st.markdown("## 📈 Analysis")
+
+    selected_prompt = st.selectbox("Select Analysis", PROMPTS)
+
+    result = run_prompt(selected_prompt, filtered)
+
+    fig = build_chart(result, selected_prompt)
+    st.plotly_chart(fig, use_container_width=True)
+
+    insights = generate_insights(selected_prompt, result)
+
+    st.markdown("## 🧠 Insights")
+    for ins in insights:
+        st.write("•", ins)
+
+    # -----------------------------
+    # Data Sample
+    # -----------------------------
+    st.markdown("## 📄 Data Sample")
+    st.dataframe(result.head(20))
+
+    # ============================================================
+    # 📥 PPT EXPORT (CORRECT SCOPE)
+    # ============================================================
+    st.markdown("## 📥 Export")
+
+    if st.button("Generate PPT"):
+
+        ppt_file = generate_ppt(
+            matched=filtered_matched,
+            k1=k1,
+            k2=k2,
+            result=result,
+            insights=insights,
+            data_sample=filtered,
+            summary_df=None
         )
+
+        with open(ppt_file, "rb") as f:
+            st.download_button(
+                label="Download PPT",
+                data=f,
+                file_name="dashboard_export.pptx",
+                mime="application/vnd.openxmlformats-officedocument.presentationml.presentation"
+            )
+
+
+# ============================================================
+# 📈 PAGE 2
+# ============================================================
+elif page == "📈 Utilization & Cost Comparison":
+
+    st.header("📈 Utilization & Cost Comparison")
+
+    df = load_summary_data()
+
+    if df is None or df.empty:
+        st.warning("No data available")
+    else:
+        st.dataframe(df.head(50))
