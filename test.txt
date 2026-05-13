@@ -102,12 +102,11 @@ if page == "📊 Matched Cohort Dashboard":
     g1_data, g2_data, _ = load_matched_datasets(df, filtered_matched)
     combined = pd.concat([g1_data, g2_data])
 
-    filters = render_filter_ui(combined)
-    filtered = apply_filters_cached(combined, filters)
+    # ============================================================
+    # 📅 TIME FILTER FIRST (KEY FIX)
+    # ============================================================
+    filtered = combined.copy()
 
-    # ============================================================
-    # 📅 MEMBER-LEVEL WINDOW FROM FIRST ELIGIBILITY (FINAL FIX)
-    # ============================================================
     st.markdown("### 📅 Select Time Range")
 
     time_range = st.selectbox(
@@ -118,7 +117,6 @@ if page == "📊 Matched Cohort Dashboard":
 
     if "ELIGIBILITYYEARMONTH" in filtered.columns:
 
-        # CLEAN + CONVERT
         filtered["ELIGIBILITYYEARMONTH"] = (
             filtered["ELIGIBILITYYEARMONTH"]
             .astype(str)
@@ -132,16 +130,16 @@ if page == "📊 Matched Cohort Dashboard":
             errors="coerce"
         )
 
-        # MEMBER START & END
+        # MEMBER START & END (from FULL dataset)
         member_start = (
-            filtered.groupby("MEMBER_ID")["ELIG_DT"]
+            combined.groupby("MEMBER_ID")["ELIG_DT"]
             .min()
             .reset_index()
             .rename(columns={"ELIG_DT": "START_DT"})
         )
 
         member_end = (
-            filtered.groupby("MEMBER_ID")["ELIG_DT"]
+            combined.groupby("MEMBER_ID")["ELIG_DT"]
             .max()
             .reset_index()
             .rename(columns={"ELIG_DT": "END_DT"})
@@ -149,7 +147,6 @@ if page == "📊 Matched Cohort Dashboard":
 
         member_window = member_start.merge(member_end, on="MEMBER_ID")
 
-        # WINDOW SIZE
         months_map = {
             "Last 3 Months": 3,
             "Last 6 Months": 6,
@@ -158,7 +155,6 @@ if page == "📊 Matched Cohort Dashboard":
 
         months = months_map[time_range]
 
-        # REQUIRED WINDOW END
         member_window["WINDOW_END"] = member_window["START_DT"] + pd.DateOffset(months=months)
 
         # KEEP ONLY MEMBERS WITH FULL WINDOW
@@ -166,25 +162,28 @@ if page == "📊 Matched Cohort Dashboard":
             member_window["END_DT"] >= member_window["WINDOW_END"]
         ]["MEMBER_ID"]
 
-        # FILTER MEMBERS
         filtered = filtered[
             filtered["MEMBER_ID"].isin(eligible_members)
         ]
 
-        # MERGE WINDOW
         filtered = filtered.merge(
             member_window[["MEMBER_ID", "START_DT", "WINDOW_END"]],
             on="MEMBER_ID",
             how="left"
         )
 
-        # FINAL DATE FILTER
         filtered = filtered[
             (filtered["ELIG_DT"] >= filtered["START_DT"]) &
             (filtered["ELIG_DT"] < filtered["WINDOW_END"])
         ].copy()
 
         st.caption(f"Members included only if they have full {months}-month history from enrollment")
+
+    # ============================================================
+    # 🎛 APPLY UI FILTERS AFTER TIME FILTER
+    # ============================================================
+    filters = render_filter_ui(filtered)
+    filtered = apply_filters_cached(filtered, filters)
 
     # -----------------------------------
     # KPI CALCULATION (unchanged)
@@ -224,7 +223,7 @@ if page == "📊 Matched Cohort Dashboard":
         render_kpis("Group2", k2)
 
     # -----------------------------------
-    # ANALYSIS + CHART + INSIGHTS (unchanged)
+    # ANALYSIS + CHART + INSIGHTS
     # -----------------------------------
     st.markdown("## 📈 Analysis")
 
