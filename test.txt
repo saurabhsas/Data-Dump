@@ -3,25 +3,22 @@ import pandas as pd
 import plotly.express as px
 import os
 import tempfile
-
 from pptx import Presentation
 
 from core.data_loader import load_data
 from core.filters import render_filter_ui, apply_filters_cached
 from core.query_router import run_prompt
 from core.insights_engine import generate_insights
-
 from core.group_match_loader import load_group_match_data
 from core.matching_engine import multi_caliper_matching
 from core.matched_data_loader import load_matched_datasets
-
 from core.summary_loader import load_summary_data
 from visualization.chart_router import build_chart
 from utils.constants import PROMPTS
 
 
 # ============================================================
-# 🔧 FORMATTERS (FIX HTML ISSUE)
+# FORMATTERS
 # ============================================================
 def format_currency(x):
     try:
@@ -37,92 +34,64 @@ def format_number(x):
 
 
 # ============================================================
-# 📊 PPT GENERATION FUNCTION
+# PPT GENERATOR
 # ============================================================
-def generate_ppt(matched, k1, k2, result, insights, data_sample, summary_df=None):
+def generate_ppt(matched, k1, k2, insights, data_sample):
 
     prs = Presentation()
 
-    # -----------------------------
-    # Slide 1: Matching Quality
-    # -----------------------------
+    # Slide 1 - Matching
     slide = prs.slides.add_slide(prs.slide_layouts[1])
     slide.shapes.title.text = "Matching Quality"
-
     slide.placeholders[1].text = f"""
 Total Matches: {format_number(len(matched))}
 Group1 Members: {format_number(matched['G1_MEMBER_ID'].nunique())}
 Group2 Members: {format_number(matched['G2_MEMBER_ID'].nunique())}
 """
 
-    # -----------------------------
-    # Slide 2: KPI
-    # -----------------------------
+    # Slide 2 - KPI
     slide = prs.slides.add_slide(prs.slide_layouts[1])
     slide.shapes.title.text = "Key Metrics Overview"
 
-    slide.placeholders[1].text = f"""
-GROUP 1
--------------------
-Members: {format_number(k1.get('Members',0))}
-Total Cost: {format_currency(k1.get('Total Cost',0))}
-PMPM: {format_currency(k1.get('PMPM',0))}
+    slide.placeholders[1].text = (
+        f"GROUP 1\n"
+        f"Members: {format_number(k1['Members'])}\n"
+        f"Total Cost: {format_currency(k1['Total Cost'])}\n"
+        f"Medical: {format_currency(k1['Medical Cost'])}\n"
+        f"Pharmacy: {format_currency(k1['Pharmacy Cost'])}\n"
+        f"ED Visits: {format_number(k1['ED Visits'])}\n"
+        f"IP Visits: {format_number(k1['IP Visits'])}\n"
+        f"PMPM: {format_currency(k1['PMPM'])}\n\n"
+        f"GROUP 2\n"
+        f"Members: {format_number(k2['Members'])}\n"
+        f"Total Cost: {format_currency(k2['Total Cost'])}\n"
+        f"Medical: {format_currency(k2['Medical Cost'])}\n"
+        f"Pharmacy: {format_currency(k2['Pharmacy Cost'])}\n"
+        f"ED Visits: {format_number(k2['ED Visits'])}\n"
+        f"IP Visits: {format_number(k2['IP Visits'])}\n"
+        f"PMPM: {format_currency(k2['PMPM'])}"
+    )
 
-GROUP 2
--------------------
-Members: {format_number(k2.get('Members',0))}
-Total Cost: {format_currency(k2.get('Total Cost',0))}
-PMPM: {format_currency(k2.get('PMPM',0))}
-"""
-
-    # -----------------------------
-    # Slide 3: Analysis & Insights
-    # -----------------------------
+    # Slide 3 - Insights
     slide = prs.slides.add_slide(prs.slide_layouts[1])
-    slide.shapes.title.text = "Analysis & Insights"
+    slide.shapes.title.text = "Insights"
+    slide.placeholders[1].text = "\n".join(insights[:6])
 
-    slide.placeholders[1].text = "\n".join([str(i) for i in insights[:6]])
-
-    # -----------------------------
-    # Slide 4: Data Sample
-    # -----------------------------
+    # Slide 4 - Data Sample
     slide = prs.slides.add_slide(prs.slide_layouts[1])
     slide.shapes.title.text = "Data Sample"
-
     slide.placeholders[1].text = str(data_sample.head(10))
-
-    # -----------------------------
-    # Category Slides (Optional)
-    # -----------------------------
-    if summary_df is not None and not summary_df.empty:
-
-        segments = {
-            "FIP - Inpatient": "FIP",
-            "FOP - Outpatient": "FOP",
-            "PROF - Professional": "PROF",
-            "OTH - Others": "OTH",
-            "ADDL - Additional": "ADDL"
-        }
-
-        for title, code in segments.items():
-            slide = prs.slides.add_slide(prs.slide_layouts[1])
-            slide.shapes.title.text = title
-
-            seg_df = summary_df[summary_df["Category"] == code]
-            slide.placeholders[1].text = str(seg_df.head(15))
 
     tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".pptx")
     prs.save(tmp.name)
-
     return tmp.name
 
 
 # ============================================================
-# PAGE CONFIG
+# APP START
 # ============================================================
 st.set_page_config(layout="wide")
 st.title("🏥 Matched Cohort Analytics Dashboard")
-
 
 page = st.sidebar.radio(
     "Navigation",
@@ -131,30 +100,38 @@ page = st.sidebar.radio(
 
 
 # ============================================================
-# 📊 PAGE 1
+# PAGE 1
 # ============================================================
 if page == "📊 Matched Cohort Dashboard":
 
-    @st.cache_data(show_spinner=False)
+    @st.cache_data
     def get_matched():
         g1, g2 = load_group_match_data()
-        matched = multi_caliper_matching(g1, g2)
-
-        os.makedirs("data", exist_ok=True)
-        matched[["G1_MEMBER_ID", "G2_MEMBER_ID"]].to_csv(
-            "data/matched_members.csv", index=False
-        )
-        return matched
+        return multi_caliper_matching(g1, g2)
 
     df = load_data()
     matched = get_matched()
 
     # -----------------------------
-    # Matching Filter
+    # MATCHING PRECISION
     # -----------------------------
+    st.markdown("## 🎛 Matching Quality")
+
+    caliper_counts = matched["caliper_used"].value_counts().to_dict()
+
+    CALIPER_DESC = {
+        "1e-05": f"Very Strict (Matches: {caliper_counts.get('1e-05',0)})",
+        "0.0001": f"Strict (Matches: {caliper_counts.get('0.0001',0)})",
+        "0.001": f"Moderate (Matches: {caliper_counts.get('0.001',0)})",
+        "0.02": f"Loose (Matches: {caliper_counts.get('0.02',0)})",
+        "no_caliper": f"Fallback (Matches: {caliper_counts.get('no_caliper',0)})"
+    }
+
+    options = ["ALL"] + list(CALIPER_DESC.keys())
+
     selected = st.multiselect(
         "Select Matching Precision Levels",
-        options=["ALL"] + sorted(matched["caliper_used"].unique()),
+        options=options,
         default=["ALL"]
     )
 
@@ -162,17 +139,18 @@ if page == "📊 Matched Cohort Dashboard":
         matched["caliper_used"].isin(selected)
     ]
 
+    st.markdown("### 📘 Precision Description")
+    for k, v in CALIPER_DESC.items():
+        st.write(f"{k}: {v}")
+
     st.write("Total Matches:", len(filtered_matched))
 
     # -----------------------------
-    # Load Data
+    # LOAD DATA
     # -----------------------------
-    g1_data, g2_data, _ = load_matched_datasets(df, filtered_matched)
-    combined = pd.concat([g1_data, g2_data])
+    g1, g2, _ = load_matched_datasets(df, filtered_matched)
+    combined = pd.concat([g1, g2])
 
-    # -----------------------------
-    # Filters
-    # -----------------------------
     filters = render_filter_ui(combined)
     filtered = apply_filters_cached(combined, filters)
 
@@ -186,6 +164,10 @@ if page == "📊 Matched Cohort Dashboard":
         return {
             "Members": members,
             "Total Cost": total,
+            "Medical Cost": df["MEDICAL_PAID"].sum(),
+            "Pharmacy Cost": df["RX_PAID"].sum(),
+            "ED Visits": df["EDVISITS"].sum(),
+            "IP Visits": df["IPVISITS"].sum(),
             "PMPM": total / members if members else 0
         }
 
@@ -193,11 +175,21 @@ if page == "📊 Matched Cohort Dashboard":
     k2 = compute_kpis(filtered[filtered["GROUP"] == "Group2"])
 
     st.markdown("## 📊 Key Metrics Overview")
-    st.write("Group1:", k1)
-    st.write("Group2:", k2)
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        for k, v in k1.items():
+            val = format_currency(v) if "Cost" in k or k=="PMPM" else format_number(v)
+            st.metric(f"G1 {k}", val)
+
+    with col2:
+        for k, v in k2.items():
+            val = format_currency(v) if "Cost" in k or k=="PMPM" else format_number(v)
+            st.metric(f"G2 {k}", val)
 
     # -----------------------------
-    # Analysis
+    # ANALYSIS
     # -----------------------------
     st.markdown("## 📈 Analysis")
 
@@ -205,9 +197,15 @@ if page == "📊 Matched Cohort Dashboard":
 
     result = run_prompt(selected_prompt, filtered)
 
+    if "MONTH" in result.columns:
+        result["MONTH"] = result["MONTH"].astype(str).str.replace(".0","")
+
     fig = build_chart(result, selected_prompt)
     st.plotly_chart(fig, use_container_width=True)
 
+    # -----------------------------
+    # INSIGHTS
+    # -----------------------------
     insights = generate_insights(selected_prompt, result)
 
     st.markdown("## 🧠 Insights")
@@ -215,39 +213,30 @@ if page == "📊 Matched Cohort Dashboard":
         st.write("•", ins)
 
     # -----------------------------
-    # Data Sample
+    # DATA
     # -----------------------------
     st.markdown("## 📄 Data Sample")
-    st.dataframe(result.head(20))
+    st.dataframe(result.head(30))
 
-    # ============================================================
-    # 📥 PPT EXPORT (FINAL)
-    # ============================================================
+    # -----------------------------
+    # PPT EXPORT
+    # -----------------------------
     st.markdown("## 📥 Export")
 
     if st.button("Generate PPT"):
+        ppt = generate_ppt(filtered_matched, k1, k2, insights, filtered)
 
-        ppt_file = generate_ppt(
-            matched=filtered_matched,
-            k1=k1,
-            k2=k2,
-            result=result,
-            insights=insights,
-            data_sample=filtered,
-            summary_df=None
-        )
-
-        with open(ppt_file, "rb") as f:
+        with open(ppt, "rb") as f:
             st.download_button(
-                label="Download PPT",
-                data=f,
-                file_name="dashboard_export.pptx",
-                mime="application/vnd.openxmlformats-officedocument.presentationml.presentation"
+                "Download PPT",
+                f,
+                "dashboard.pptx",
+                "application/vnd.openxmlformats-officedocument.presentationml.presentation"
             )
 
 
 # ============================================================
-# 📈 PAGE 2
+# PAGE 2
 # ============================================================
 elif page == "📈 Utilization & Cost Comparison":
 
@@ -255,7 +244,5 @@ elif page == "📈 Utilization & Cost Comparison":
 
     df = load_summary_data()
 
-    if df is None or df.empty:
-        st.warning("No data available")
-    else:
+    if df is not None:
         st.dataframe(df.head(50))
