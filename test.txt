@@ -105,11 +105,11 @@ if page == "📊 Matched Cohort Dashboard":
     filters = render_filter_ui(combined)
     filtered = apply_filters_cached(combined, filters)
 
-    # 🔥 CRITICAL FIX BASE COPY
+    # 🔥 BASE COPY BEFORE TIME FILTER (CRITICAL)
     filtered_base = filtered.copy()
 
     # ============================================================
-    # 📅 MEMBER-LEVEL LAST X MONTHS FILTER (FIXED)
+    # 📅 MEMBER-LEVEL LAST X MONTHS FILTER (FINAL FIX)
     # ============================================================
     st.markdown("### 📅 Select Time Range")
 
@@ -121,33 +121,26 @@ if page == "📊 Matched Cohort Dashboard":
 
     if "ELIGIBILITYYEARMONTH" in filtered.columns:
 
-        filtered["ELIGIBILITYYEARMONTH"] = (
-            filtered["ELIGIBILITYYEARMONTH"]
-            .astype(str)
-            .str.replace(".0", "", regex=False)
-            .astype(int)
-        )
+        # -----------------------------
+        # CLEAN + CONVERT
+        # -----------------------------
+        for df_tmp in [filtered, filtered_base]:
+            df_tmp["ELIGIBILITYYEARMONTH"] = (
+                df_tmp["ELIGIBILITYYEARMONTH"]
+                .astype(str)
+                .str.replace(".0", "", regex=False)
+                .astype(int)
+            )
 
-        filtered["ELIG_DT"] = pd.to_datetime(
-            filtered["ELIGIBILITYYEARMONTH"].astype(str),
-            format="%Y%m",
-            errors="coerce"
-        )
+            df_tmp["ELIG_DT"] = pd.to_datetime(
+                df_tmp["ELIGIBILITYYEARMONTH"].astype(str),
+                format="%Y%m",
+                errors="coerce"
+            )
 
-        # 🔥 FIX: compute from base (not filtered)
-        filtered_base["ELIGIBILITYYEARMONTH"] = (
-            filtered_base["ELIGIBILITYYEARMONTH"]
-            .astype(str)
-            .str.replace(".0", "", regex=False)
-            .astype(int)
-        )
-
-        filtered_base["ELIG_DT"] = pd.to_datetime(
-            filtered_base["ELIGIBILITYYEARMONTH"].astype(str),
-            format="%Y%m",
-            errors="coerce"
-        )
-
+        # -----------------------------
+        # MEMBER-LEVEL END DATE (FROM BASE)
+        # -----------------------------
         member_end = (
             filtered_base.groupby("MEMBER_ID")["ELIG_DT"]
             .max()
@@ -157,24 +150,33 @@ if page == "📊 Matched Cohort Dashboard":
 
         filtered = filtered.merge(member_end, on="MEMBER_ID", how="left")
 
-        if time_range == "Last 3 Months":
-            months = 3
-        elif time_range == "Last 6 Months":
-            months = 6
-        elif time_range == "Last 9 Months":
-            months = 9
-        else:
-            months = 12
+        # -----------------------------
+        # WINDOW SIZE
+        # -----------------------------
+        months_map = {
+            "Last 3 Months": 3,
+            "Last 6 Months": 6,
+            "Last 9 Months": 9,
+            "Last 12 Months": 12
+        }
 
+        months = months_map[time_range]
+
+        # -----------------------------
+        # START DATE
+        # -----------------------------
         filtered["START_DT"] = filtered["END_DT"] - pd.DateOffset(months=months)
 
+        # -----------------------------
+        # 🔥 STRICT FILTER (REAL FIX)
+        # -----------------------------
         filtered = filtered[
             (filtered["ELIG_DT"].isna()) |
             (
                 (filtered["ELIG_DT"] >= filtered["START_DT"]) &
-                (filtered["ELIG_DT"] <= filtered["END_DT"])
+                (filtered["ELIG_DT"] < filtered["END_DT"] + pd.DateOffset(days=1))
             )
-        ]
+        ].copy()
 
         st.caption(f"Each member evaluated over last {months} months from their latest eligibility")
 
