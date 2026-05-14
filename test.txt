@@ -1,248 +1,411 @@
-import streamlit as st
-import pandas as pd
-import plotly.express as px
-import os
-import tempfile
-from pptx import Presentation
+/*-----------------CODE FOR CCM---------------------------*/
+%let me_n='me-1';  * NOTE: Default is 'me-1' for all reports run in month following month-end;
+                   *       If previously-reported month needs to be regenerated use me-2 or higher;
+                   
 
-from core.data_loader import load_data
-from core.filters import render_filter_ui, apply_filters_cached
-from core.query_router import run_prompt
-from core.insights_engine import generate_insights
-from core.group_match_loader import load_group_match_data
-from core.matching_engine import multi_caliper_matching
-from core.matched_data_loader import load_matched_datasets
-from core.summary_loader import load_summary_data
-from visualization.chart_router import build_chart
-from utils.constants import PROMPTS
+%let mb_n='mb-1'; 
+
+%put &mb_n;
+%put &me_n;
 
 
-# ============================================================
-# FORMATTERS
-# ============================================================
-def format_currency(x):
-    try:
-        return f"${float(x):,.0f}"
-    except:
-        return str(x)
+***************************************************************;
+* REPORT 10B: CC2.0 - CC Outreach Rate (Details)
+***************************************************************;
+PROC SQL ;
+  connect to odbc as mycon
+/*   (DATASRC=XXXXXX authdomain=XXXXXX);*/
+   (DATASRC=XXXXXXXX authdomain=XXXXXXX);
+ 
+   CREATE TABLE OUTREACH_DETAIL AS 
+   SELECT *
+      from connection to mycon  (
 
-def format_number(x):
-    try:
-        return f"{int(x):,}"
-    except:
-        return str(x)
+/*
+Details report for patient outreach rate.
 
+Default reporting period is the previous month: mb-1 through me-1
 
-# ============================================================
-# PPT GENERATOR
-# ============================================================
-def generate_ppt(matched, k1, k2, insights, data_sample):
+Includes all non-cancelled CM Episodes active during the reporting period with at least one Case Management encounter linked (encouter types 2592, 2593, or 2594)
 
-    prs = Presentation()
+The purpose of this report is to quantify the number of successful and unsuccessful outreach attempts made during the report period. This report generates 3 numerators:
+ - Numerator 1: Successful outreaches
+ - Numerator 2: Unsuccessful outreaches
+ - Numerator 3: Total outreaches
 
-    # Slide 1 - Matching
-    slide = prs.slides.add_slide(prs.slide_layouts[1])
-    slide.shapes.title.text = "Matching Quality"
-    slide.placeholders[1].text = f"""
-Total Matches: {format_number(len(matched))}
-Group1 Members: {format_number(matched['G1_MEMBER_ID'].nunique())}
-Group2 Members: {format_number(matched['G2_MEMBER_ID'].nunique())}
-"""
-
-    # Slide 2 - KPI
-    slide = prs.slides.add_slide(prs.slide_layouts[1])
-    slide.shapes.title.text = "Key Metrics Overview"
-
-    slide.placeholders[1].text = (
-        f"GROUP 1\n"
-        f"Members: {format_number(k1['Members'])}\n"
-        f"Total Cost: {format_currency(k1['Total Cost'])}\n"
-        f"Medical: {format_currency(k1['Medical Cost'])}\n"
-        f"Pharmacy: {format_currency(k1['Pharmacy Cost'])}\n"
-        f"ED Visits: {format_number(k1['ED Visits'])}\n"
-        f"IP Visits: {format_number(k1['IP Visits'])}\n"
-        f"PMPM: {format_currency(k1['PMPM'])}\n\n"
-        f"GROUP 2\n"
-        f"Members: {format_number(k2['Members'])}\n"
-        f"Total Cost: {format_currency(k2['Total Cost'])}\n"
-        f"Medical: {format_currency(k2['Medical Cost'])}\n"
-        f"Pharmacy: {format_currency(k2['Pharmacy Cost'])}\n"
-        f"ED Visits: {format_number(k2['ED Visits'])}\n"
-        f"IP Visits: {format_number(k2['IP Visits'])}\n"
-        f"PMPM: {format_currency(k2['PMPM'])}"
-    )
-
-    # Slide 3 - Insights
-    slide = prs.slides.add_slide(prs.slide_layouts[1])
-    slide.shapes.title.text = "Insights"
-    slide.placeholders[1].text = "\n".join(insights[:6])
-
-    # Slide 4 - Data Sample
-    slide = prs.slides.add_slide(prs.slide_layouts[1])
-    slide.shapes.title.text = "Data Sample"
-    slide.placeholders[1].text = str(data_sample.head(10))
-
-    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".pptx")
-    prs.save(tmp.name)
-    return tmp.name
-
-
-# ============================================================
-# APP START
-# ============================================================
-st.set_page_config(layout="wide")
-st.title("🏥 Matched Cohort Analytics Dashboard")
-
-page = st.sidebar.radio(
-    "Navigation",
-    ["📊 Matched Cohort Dashboard", "📈 Utilization & Cost Comparison"]
+Includes data for successful / unsuccessful outreaches by encounter type (telephone, office, home), for future use.
+*/
+with report_dates_pre as (  /*basic date checking and defaulting for report period*/
+  select
+    case /*default the start date to beginning of the previous month if not specified or invalid; start date has to be on or after 6/1/2019*/
+      when '{?Start date}' is null then greatest(efn_din(&mb_n.),efn_din('6/1/2019'))
+      when efn_din('{?Start date}') is null then greatest(efn_din(&mb_n.),efn_din('6/1/2019'))
+      when efn_din('{?Start date}') < efn_din('6/1/2019') then efn_din('6/1/2019')
+      else efn_din('{?Start date}')
+    end rpt_start_date
+   , case  /*reason the start date was modified, if modification was needed*/
+      when '{?Start date}' is null then 'No start date entered. Default start date to beginning of the previous month.'
+      when efn_din('{?Start date}') is null then 'Invalid start date entered: ' || '{?Start date}' ||'. Default start date to beginning of the previous month.'
+      when efn_din('{?Start date}') < efn_din('6/1/2019') then 'Start date prior to CC2.0 program start date: ' || '{?Start date}' ||'. Updated to 6/1/2019.'
+      else null
+    end rpt_start_date_rsn
+   , case /*default the end date to last day of the previous month if not specified or invalid.*/
+      when '{?End date}' is null then greatest(efn_din(&me_n.),efn_din('6/30/2019'))
+      when efn_din('{?End date}') is null then greatest(efn_din(&me_n.),efn_din('6/30/2019'))
+      when efn_din('{?End date}') < efn_din('6/1/2019') then efn_din('6/30/2019')
+      else efn_din('{?End date}')
+    end rpt_end_date
+   , case /*reason the end date was modified, if modification was needed*/
+      when '{?End date}' is null then 'No end date entered. Default end date to end of previous month.'
+      when efn_din('{?End date}') is null then 'Invalid end date entered: ' || '{?End date}' ||'. Defaulted end date to end of previous month.'
+      when efn_din('{?End date}') < efn_din('6/1/2019') then 'End date prior to CC2.0 program start date: ' || '{?End date}' ||'. Updated to 6/30/2019.'
+      else null
+    end rpt_end_date_rsn 
+  from dual
+), report_dates as (  /*final date checking to ensure end-date is after start-date; default to week-end of start date if end date is earlier than start date*/
+  select
+    rd.rpt_start_date
+    , rd.rpt_start_date_rsn
+    , case when rd.rpt_start_date > rd.rpt_end_date then dd.month_end_dt else rd.rpt_end_date end rpt_end_date
+    , case when rd.rpt_start_date > rd.rpt_end_date then rd.rpt_end_date_rsn else 'End date prior to start date: ' || rd.rpt_end_date || '. Updated to month end of report start date.' end rpt_end_date_rsn
+  from report_dates_pre rd
+    inner join date_dimension dd on rd.rpt_start_date = dd.calendar_dt
+), episode_pop as (  /* all CM episodes active during the reporting period*/
+  select
+    eps.pat_link_id pat_id
+    , eps.episode_id
+    , eps.start_date
+    , eps.end_date
+    , rd.rpt_start_date
+    , rd.rpt_start_date_rsn
+    , rd.rpt_end_date
+    , rd.rpt_end_date_rsn
+    /*, dd.month_end_dt*/
+  from episode eps
+    /*inner join report_dates rd on eps.start_date >= rd.rpt_start_date and eps.start_date <= rd.rpt_end_date  --episode started during search window*/
+    inner join report_dates rd on coalesce(eps.end_date,efn_din('12/31/2100')) >= rd.rpt_start_date and eps.start_date <= rd.rpt_end_date  /*episode active during search window*/
+    /*inner join date_dimension dd on dd.calendar_dt = eps.start_date*/
+  where eps.sum_blk_type_id = 2100003401 /*Case Management*/
+    and status_c <> 3  /*episode not cancelled*/
+), episode_pop_new_cm_encs as (  /*gather all case management encounters (specifically not limiting to reporting period, so that we can use this to screen out toc-only)*/
+  select
+    eps.pat_id
+    , eps.episode_id
+    , pe.pat_enc_csn_id
+    , pe.contact_date
+    , pe.enc_type_c
+  from episode_pop eps
+    inner join episode_link epl on epl.episode_id = eps.episode_id
+    inner join pat_enc pe on pe.pat_enc_csn_id = epl.pat_enc_csn_id
+      and pe.enc_type_c in (2592,2593,2594)  /*all CM encounter types*/
+), episode_pop_new_cm as (  /* Case Management episodes with at least one CM encounter linked to it; used to filter out ToC-only episodes*/
+  select
+    eps.pat_id
+    , eps.episode_id
+  from episode_pop_new_cm_encs eps
+  group by 
+    eps.pat_id
+    , eps.episode_id
+), rfl_pop as (
+  select
+    rfl.referral_id
+    , rfl.pat_id
+    , rfl.rfl_status_c
+    , rfl.entry_date
+    , rfl.pcp_prov_id
+    , rfl.referring_prov_id
+    , rfl.refd_by_dept_id
+    , qa1.quest_answer ref_type
+    , qa2.quest_answer ref_src
+    , qa3.quest_answer ref_rsn
+    , row_number() over (partition by rfl.pat_id order by rfl.entry_date) rankval /*'rankval=1' is earliest referral*/
+  from referral rfl
+    inner join episode_pop_new_cm eps on eps.pat_id = rfl.pat_id
+    inner join referral_px rpx on rpx.referral_id = rfl.referral_id
+    left join referral_2 rf2 on rf2.referral_id = rfl.referral_id
+    left join cl_qanswer_qa qa1 on qa1.answer_id = rf2.qnr_hqa_id and qa1.quest_id = 117474  /*referral type*/
+    left join cl_qanswer_qa qa2 on qa2.answer_id = rf2.qnr_hqa_id and qa2.quest_id = 117479  /*referral source*/
+    left join cl_qanswer_qa qa3 on qa3.answer_id = rf2.qnr_hqa_id and qa3.quest_id = 117480  /*referral reason*/
+  where rpx.px_id = 35129 /* REF113-AMB REFERRAL TO CASE MGMT*/
+    and rfl.rfl_status_c <> 4 and rfl.rfl_status_c <> 102  /*not cancelled or 'error'*/
+    and lower(qa2.quest_answer) like 'php%'
+), pat_pop as (
+  select
+    eps.pat_id
+    , eps.episode_id
+    , eps.start_date
+    , eps.end_date
+    , eps.rpt_start_date
+    , eps.rpt_start_date_rsn
+    , eps.rpt_end_date
+    , eps.rpt_end_date_rsn
+    /*, eps.month_end_dt*/
+    , sev1.smrtdta_elem_value acg_rub
+    , sev2.smrtdta_elem_value acg_htc
+    , rfl.entry_date ref_date
+    , rfl.ref_src
+    , case when (lower(sev1.smrtdta_elem_value) in ('medium', 'high') and sev2.smrtdta_elem_value >= .3) or rfl.pat_id is not null then 1 else 0 end cm_crit
+  from episode_pop eps
+    inner join episode_pop_new_cm eps2 on eps2.episode_id = eps.episode_id  /*screens out ToC-only episodes (i.e. those without a Case Management encounter linked to them)*/
+    left join smrtdta_elem_data sed1 on sed1.record_id_varchar = eps.pat_id and sed1.context_name = 'PATIENT' and sed1.element_id = 'EPIC#31000027647'  /*ACG: Resource Utilization Band (RUB)*/
+    left join smrtdta_elem_value sev1 on sed1.hlv_id = sev1.hlv_id and sev1.line=1
+    left join smrtdta_elem_data sed2 on sed2.record_id_varchar = eps.pat_id and sed2.context_name = 'PATIENT' and sed2.element_id = 'EPIC#31000027657'  /*ACG: probability of high cost in the next 12 months*/
+    left join smrtdta_elem_value sev2 on sed2.hlv_id = sev2.hlv_id and sev2.line=1
+    left join rfl_pop rfl on rfl.pat_id = eps.pat_id and rfl.rankval=1
+), unsuccessful_calls as (  /*all unsuccessful calls during the report period. unsuccessful call determined by RFV list*/
+  select 
+    pe.pat_id
+    , pe.episode_id
+    , pe.pat_enc_csn_id
+    , pe.contact_date
+    , pe.enc_type_c
+    , rv.enc_reason_id
+  from episode_pop_new_cm_encs pe
+    inner join report_dates rd on pe.contact_date between rd.rpt_start_date and rd.rpt_end_date  /*call during report period*/
+    left join pat_enc_rsn_visit rv on rv.pat_enc_csn_id = pe.pat_enc_csn_id
+  where rv.enc_reason_id in (120000500,120000501,120000502)
+  group by
+    pe.pat_id
+    , pe.episode_id
+    , pe.pat_enc_csn_id
+    , pe.contact_date
+    , pe.enc_type_c
+    , rv.enc_reason_id
+), unsuccessful_call_ttl as (  /*total number of successful calls during reporting period by episode*/
+  select uc.pat_id
+    , uc.episode_id
+    , sum(case when uc.enc_type_c = 2592 then 1 else 0 end) num_tel
+    , sum(case when uc.enc_type_c = 2593 then 1 else 0 end) num_home
+    , sum(case when uc.enc_type_c = 2594 then 1 else 0 end) num_off
+    , count(uc.pat_enc_csn_id) num_calls
+  from unsuccessful_calls uc
+  group by uc.pat_id
+    , uc.episode_id
+), successful_calls as (  /*pat_id and episode_id for episodes that have had at least one successful CM outreach / contact*/
+  select 
+    pe.pat_id
+    , pe.episode_id
+    , pe.pat_enc_csn_id
+    , pe.contact_date
+    , pe.enc_type_c
+  from episode_pop_new_cm_encs pe
+    inner join report_dates rd on pe.contact_date between rd.rpt_start_date and rd.rpt_end_date  /*call during report period*/
+    left join unsuccessful_calls uc on pe.pat_enc_csn_id = uc.pat_enc_csn_id
+  where uc.pat_id is null  /*screens out unsuccessful calls*/
+), successful_call_ttl as (  /*total number of successful calls during reporting period by episode*/
+  select
+    sc.pat_id
+    , sc.episode_id
+    , sum(case when sc.enc_type_c = 2592 then 1 else 0 end) num_tel
+    , sum(case when sc.enc_type_c = 2593 then 1 else 0 end) num_home
+    , sum(case when sc.enc_type_c = 2594 then 1 else 0 end) num_off
+    , count(sc.pat_enc_csn_id) num_calls
+  from successful_calls sc
+  group by 
+    sc.pat_id
+    , sc.episode_id
+), flo_data as (
+  select 
+    pop.episode_id
+    , max(case when ifm.flo_meas_id = 29121 then ifm.recorded_time else null end) as loc_date_latest  /*CNA LoC date recorded*/
+    , min(case when ifm.flo_meas_id = 29121 then ifm.recorded_time else null end) as acd_loc_date  /*CNA LoC date recorded*/
+    , min(case when ifm.flo_meas_id = 29253 then ifm.recorded_time else null end) as acd_au_date  /*CNA Assessment User date recorded*/
+    , min(case when ifm.flo_meas_id = 29254 then to_date(efn_din('12/31/1840')+ifm.meas_value) else null end) as acd_ad_date  /* CNA Assessment Date*/
+    , substr(min(case when ifm.flo_meas_id = 29121 then to_char(ifm.recorded_time, 'yyyy-mm-dd hh:mi:ss') || '-' || ifm.meas_value else null end),21,1) as acd_loc  /*CNA LoC*/
+    , substr(max(case when ifm.flo_meas_id = 29121 then to_char(ifm.recorded_time, 'yyyy-mm-dd hh:mi:ss') || '-' || ifm.meas_value else null end),21,1) as loc_latest  /*Most recent/current LoC*/
+    , substr(min(case when ifm.flo_meas_id = 29253 then to_char(ifm.recorded_time, 'yyyy-mm-dd hh:mi:ss') || '-' || ifm.meas_value else null end),21,250) as acd_au  /*CNA Assessment User*/
+    , min(case when ifm.flo_meas_id = 29595 then ifm.recorded_time else null end) as care_plan_comp_date  /*care plan completion date*/
+    , substr(min(case when ifm.flo_meas_id = 29170 then to_char(ifm.recorded_time, 'yyyy-mm-dd hh:mi:ss') || '-' || ifm.meas_value else null end),21,250) as close_rsn  /*Episode close reason*/
+    , min(case when ifm.flo_meas_id = 29170 then ifm.recorded_time else null end) as close_rsn_date
+  from pat_pop pop
+    inner join ip_flwsht_rec ifr on ifr.pat_id = pop.pat_id
+    inner join ip_flwsht_meas ifm on ifm.fsd_id = ifr.fsd_id
+  where ifm.flo_meas_id in (
+          29121  /*PHS R AMB CM LEVEL OF CARE COORDINATION CNA*/
+        , 29253  /*PHS R AMB CM CNA INITIAL ASSESSMENT USER*/
+        , 29254  /*PHS R CM INITIAL ASSESSMENT COMPLETION DATE CNA*/
+        , 29595  /*PHS R CM CARE PLAN COMPLETE*/
+        , 29170  /*PHS R AMB CM REASON FOR CLOSING EPISODE*/
+      )
+    and ifm.recorded_time >= pop.start_date and ifm.recorded_time <= coalesce(pop.end_date,efn_din('t'))+1  /*limit to data entered during episode*/
+  group by pop.episode_id
+), pat_pop_all_payor as (  /* all patient's payors active at episode start or report start, whichever is later*/
+  select 
+    pop.pat_id
+    , pop.episode_id
+    , fo.line
+    , fo.filing_order
+    , fo.coverage_id
+    , coalesce(pg.payor_id, cvg.payor_id) payor_id
+    , coalesce(cml.mem_eff_from_date, cvg.cvg_eff_dt) cvg_eff_dt
+    , coalesce(cml.mem_eff_to_date, cvg.cvg_term_dt, efn_din('12/31/2100')) cvg_term_dt
+    , case
+       when coalesce(pg.payor_id, cvg.payor_id) is null then 6  /*'<unassigned>'*/
+       when coalesce(pg.payor_id, cvg.payor_id) in (200, 240, 620, 622, 621) then 1  /*'PHP CAP'*/
+       when coalesce(pg.payor_id, cvg.payor_id) in (100, 450, 563) then 2  /*'Medicare FFS'*/
+       when coalesce(pg.payor_id, cvg.payor_id) in (581, 600, 611, 640, 656, 630, 643) then 3  /*'UHC'*/
+       when coalesce(pg.payor_id, cvg.payor_id) in (250, 270, 290, 624, 625, 645, 647, 659, 683, 684, 678, 623) then 4  /*'Other PHP'*/
+       else 5  /*'Other'*/
+     end payor_grp
+    , case
+        when coalesce(pg.payor_id, cvg.payor_id) in (622, 240, 612, 548, 588, 526, 527, 614, 626, 637, 559, 529, 672, 400) then 1  /*commercial*/
+        when coalesce(pg.payor_id, cvg.payor_id) in (621, 101, 530, 648, 651) then 2 /* medicaid*/
+        when coalesce(pg.payor_id, cvg.payor_id) in (620, 200, 675, 639, 669, 638, 685) then 3 /*medicare*/
+        else 4 /*no sub-cat*/
+      end payor_subgrp
+  from pat_pop pop
+    inner join pat_cvg_file_order fo on fo.pat_id = pop.pat_id
+    inner join coverage cvg on cvg.coverage_id = fo.coverage_id
+    inner join coverage_member_list cml on cml.coverage_id = fo.coverage_id and cml.pat_id = fo.pat_id
+    left join plan_grp pg on pg.plan_grp_id = cvg.plan_grp_id
+  where fo.filing_order_cat is null  /*excludes 'spec' filing order categories. primarily this is for worker's comp coverages that should have a special filing order*/
+    and coalesce(cml.mem_eff_from_date, cvg.cvg_eff_dt) <= pop.start_date  /*coverage started on or before episode or report start date (whichever is later)*/
+    and coalesce(cml.mem_eff_to_date, cvg.cvg_term_dt, efn_din('12/31/2100')) > pop.start_date  /*coverage termed after episode start date or report start date (whichever is later)*/
+), pat_pop_payor as (   /*ranked list of coverages active as of an event date, giving precedence based on payor groupings set in pat_pop_all_cvg, and not just filing order*/
+  select 
+    pat_pop_all_payor.*
+    /*, row_number() over (partition by episode_id order by filing_order) adj_filing_order  --adjusted filing order, collapsing the actual filing order to a sequential list (1,2,3 instead of 1,4,8)*/
+    , row_number() over (partition by episode_id order by payor_grp, filing_order) rankval  /*payor group takes precendence, followed by filing order*/
+  from pat_pop_all_payor
+), pat_pop_locdep as (  /* all patient's primary location departments active during report range*/
+  select
+    pop.pat_id
+    , pop.episode_id
+    , pcp.eff_date pcp_eff_dt
+    , coalesce(pcp.term_date, efn_din('12/31/9999')) pcp_term_dt
+    , ser.prov_id
+    , ser.primary_dept_id department_id
+    , row_number() over (partition by pop.episode_id order by pcp.eff_date, coalesce(pcp.term_date, efn_din('12/31/9999')) desc) rankval
+  from pat_pop pop
+    inner join pat_pcp pcp on pop.pat_id = pcp.pat_id
+    inner join clarity_ser_2 ser on pcp.pcp_prov_id = ser.prov_id
+  where pcp.pcp_type_c = 1  /*general PCP*/
+    and pcp.eff_date <= pop.start_date  /*PCP was effective on or before episode start date*/
+    and coalesce(pcp.term_date, efn_din('12/31/9999')) > pop.start_date  /*PCP was termed after episode start date*/
+), pat_pop_cm as (  /* patient's complex case manager nearest to start of episode*/
+  select
+    pop.pat_id
+    , pop.episode_id
+    , pcp.eff_date cm_eff_dt
+    , coalesce(pcp.term_date, efn_din('12/31/9999')) cm_term_dt
+    , pcp.pcp_prov_id prov_id
+    , row_number() over (partition by pop.episode_id order by pcp.eff_date asc, coalesce(pcp.term_date, efn_din('12/31/9999')) desc) rankval
+  from pat_pop pop
+    inner join pat_pcp pcp on pop.pat_id = pcp.pat_id
+  where pcp.relationship_c = 62  /*complex case manager*/
+    and pcp.eff_date <= coalesce(pop.end_date,pop.rpt_end_date)  /*effective before end of episode or report end date (if episode still active)*/
+    and coalesce(pcp.term_date, efn_din('12/31/9999')) > pop.start_date  /*termed after case started*/
+), assmt_comp_dt as (
+  select 
+    episode_id
+    , acd_loc_date
+    , acd_loc
+    , acd_au
+    , acd_au_date
+    , acd_ad_date
+    , case
+        when acd_loc_date is null then null  /*have to have LoC*/
+        when acd_au_date is null and acd_ad_date is null then null /*have to have either user or date (value, not recorded time)*/
+        when acd_au_date is null then greatest(trunc(acd_loc_date),acd_ad_date)  /*if user documented date is null, documented assessment date (value, not recorded time) is not*/
+        when acd_ad_date is null then greatest(trunc(acd_loc_date),trunc(acd_au_date))  /*if assessment date is null, assessment user is not*/
+        else greatest(trunc(acd_loc_date), least(trunc(acd_au_date), acd_ad_date))  /*LoC, assessment user, and assessment date all filled out*/
+      end assmt_comp_date
+  from flo_data 
+), sc_to_assmt_comp as (/*get count of "successful calls" needed to reach assessment completion*/
+  select
+    pop.pat_id
+    , pop.episode_id
+    , count(sc.pat_id) num_outreach
+  from pat_pop pop
+    inner join assmt_comp_dt acd on acd.episode_id = pop.episode_id  /*limit to patients who've had an assessment completed*/
+    left join successful_calls sc on sc.episode_id = pop.episode_id
+  where sc.contact_date >= pop.start_date and sc.contact_date <= acd.assmt_comp_date
+  group by 
+    pop.pat_id
+    , pop.episode_id
+), consolidated_data as (
+  select
+    pop.pat_id
+    , pat.pat_name
+    , pop.episode_id
+    , pop.start_date
+    , pop.end_date
+    , id1.identity_id uci
+    , id2.identity_id mrn
+    , coalesce(epm.payor_name,'<no primary payor>') primary_payor_name
+    , case
+        when pay.payor_grp = 1 then 'PHP CAP'
+        when pay.payor_grp = 2 then 'Medicare FFS'
+        when pay.payor_grp = 3 then 'UHC'
+        when pay.payor_grp = 4 then 'Other PHP'
+        when pay.payor_grp = 5 then 'Other'
+        when pay.payor_grp = 6 then '<none>'
+      end payor_grp_name
+    , case
+        when pay.payor_subgrp = 1 then 'Commercial'
+        when pay.payor_subgrp = 2 then 'Medicaid'
+        when pay.payor_subgrp = 3 then 'Medicare'
+        when pay.payor_subgrp = 4 then null
+        else null
+      end payor_subgrp_name
+    , ld.department_id primary_dep_id
+    , coalesce(dep.department_name, '<no primary location>') primary_dep_name
+    , dep.dept_abbreviation primary_dep_abbrv
+    , pri_eaf.loc_name pri_eaf_name
+    , pri_eaf.location_abbr pri_eaf_abbv
+    , cm.prov_id  case_manager_id
+    , coalesce(ser.prov_name, '<no case manager>') case_manager_name
+    , pop.rpt_start_date
+    , pop.rpt_start_date_rsn
+    , pop.rpt_end_date
+    , pop.rpt_end_date_rsn
+    /*, pop.month_end_dt*/
+    , flo.loc_latest level_of_care
+    , flo.acd_loc
+    , flo.acd_loc_date
+    , flo.acd_au_date
+    , flo.acd_au
+    , flo.acd_ad_date
+    , acd.assmt_comp_date
+    , flo.care_plan_comp_date
+    , flo.close_rsn
+    , coalesce(sct.num_calls,0) sc_total
+    , coalesce(sct.num_tel,0) sc_tel
+    , coalesce(sct.num_home,0) sc_home
+    , coalesce(sct.num_off,0) sc_off
+    , coalesce(uct.num_calls,0) uc_total
+    , coalesce(uct.num_tel,0) uc_tel
+    , coalesce(uct.num_home,0) uc_home
+    , coalesce(uct.num_off,0) uc_off
+    , (coalesce(sct.num_calls,0) + coalesce(uct.num_calls,0)) all_total
+    , sc2.num_outreach
+    , pop.acg_rub
+    , pop.acg_htc
+    , pop.ref_date
+    , pop.ref_src
+    , pop.cm_crit
+    , 1 as denom
+  from pat_pop pop
+    inner join patient pat on pat.pat_id = pop.pat_id
+    left join identity_id id1 on id1.pat_id = pop.pat_id and id1.identity_type_id = 333  /*'333' = UCI id type*/
+    left join identity_id id2 on id2.pat_id = pop.pat_id and id2.identity_type_id = 0  /*'0' = system-level MRN (not SA/DEP dependent)*/
+    left join pat_pop_payor pay on pay.episode_id = pop.episode_id and pay.rankval=1
+    left join clarity_epm epm on epm.payor_id = pay.payor_id
+    left join pat_pop_locdep ld on ld.episode_id = pop.episode_id and ld.rankval=1
+    left join clarity_dep dep on dep.department_id = ld.department_id
+    left join clarity_loc pri_eaf on pri_eaf.loc_id = dep.rev_loc_id
+    left join pat_pop_cm cm on cm.episode_id = pop.episode_id and cm.rankval=1
+    left join clarity_ser ser on ser.prov_id = cm.prov_id
+    left join assmt_comp_dt acd on acd.episode_id = pop.episode_id
+    left join flo_data flo on flo.episode_id = pop.episode_id
+    left join successful_call_ttl sct on sct.episode_id = pop.episode_id
+    left join unsuccessful_call_ttl uct on uct.episode_id = pop.episode_id
+    left join sc_to_assmt_comp sc2 on sc2.episode_id = pop.episode_id
+  where 1 = case when '{?CM Crit}' = 'Exclude' and cm_crit = 0 then 0 else 1 end
 )
-
-
-# ============================================================
-# PAGE 1
-# ============================================================
-if page == "📊 Matched Cohort Dashboard":
-
-    @st.cache_data
-    def get_matched():
-        g1, g2 = load_group_match_data()
-        return multi_caliper_matching(g1, g2)
-
-    df = load_data()
-    matched = get_matched()
-
-    # -----------------------------
-    # MATCHING PRECISION
-    # -----------------------------
-    st.markdown("## 🎛 Matching Quality")
-
-    caliper_counts = matched["caliper_used"].value_counts().to_dict()
-
-    CALIPER_DESC = {
-        "1e-05": f"Very Strict (Matches: {caliper_counts.get('1e-05',0)})",
-        "0.0001": f"Strict (Matches: {caliper_counts.get('0.0001',0)})",
-        "0.001": f"Moderate (Matches: {caliper_counts.get('0.001',0)})",
-        "0.02": f"Loose (Matches: {caliper_counts.get('0.02',0)})",
-        "no_caliper": f"Fallback (Matches: {caliper_counts.get('no_caliper',0)})"
-    }
-
-    options = ["ALL"] + list(CALIPER_DESC.keys())
-
-    selected = st.multiselect(
-        "Select Matching Precision Levels",
-        options=options,
-        default=["ALL"]
-    )
-
-    filtered_matched = matched if "ALL" in selected else matched[
-        matched["caliper_used"].isin(selected)
-    ]
-
-    st.markdown("### 📘 Precision Description")
-    for k, v in CALIPER_DESC.items():
-        st.write(f"{k}: {v}")
-
-    st.write("Total Matches:", len(filtered_matched))
-
-    # -----------------------------
-    # LOAD DATA
-    # -----------------------------
-    g1, g2, _ = load_matched_datasets(df, filtered_matched)
-    combined = pd.concat([g1, g2])
-
-    filters = render_filter_ui(combined)
-    filtered = apply_filters_cached(combined, filters)
-
-    # -----------------------------
-    # KPI
-    # -----------------------------
-    def compute_kpis(df):
-        members = df["MEMBER_ID"].nunique()
-        total = df["PAID"].sum()
-
-        return {
-            "Members": members,
-            "Total Cost": total,
-            "Medical Cost": df["MEDICAL_PAID"].sum(),
-            "Pharmacy Cost": df["RX_PAID"].sum(),
-            "ED Visits": df["EDVISITS"].sum(),
-            "IP Visits": df["IPVISITS"].sum(),
-            "PMPM": total / members if members else 0
-        }
-
-    k1 = compute_kpis(filtered[filtered["GROUP"] == "Group1"])
-    k2 = compute_kpis(filtered[filtered["GROUP"] == "Group2"])
-
-    st.markdown("## 📊 Key Metrics Overview")
-
-    col1, col2 = st.columns(2)
-
-    with col1:
-        for k, v in k1.items():
-            val = format_currency(v) if "Cost" in k or k=="PMPM" else format_number(v)
-            st.metric(f"G1 {k}", val)
-
-    with col2:
-        for k, v in k2.items():
-            val = format_currency(v) if "Cost" in k or k=="PMPM" else format_number(v)
-            st.metric(f"G2 {k}", val)
-
-    # -----------------------------
-    # ANALYSIS
-    # -----------------------------
-    st.markdown("## 📈 Analysis")
-
-    selected_prompt = st.selectbox("Select Analysis", PROMPTS)
-
-    result = run_prompt(selected_prompt, filtered)
-
-    if "MONTH" in result.columns:
-        result["MONTH"] = result["MONTH"].astype(str).str.replace(".0","")
-
-    fig = build_chart(result, selected_prompt)
-    st.plotly_chart(fig, use_container_width=True)
-
-    # -----------------------------
-    # INSIGHTS
-    # -----------------------------
-    insights = generate_insights(selected_prompt, result)
-
-    st.markdown("## 🧠 Insights")
-    for ins in insights:
-        st.write("•", ins)
-
-    # -----------------------------
-    # DATA
-    # -----------------------------
-    st.markdown("## 📄 Data Sample")
-    st.dataframe(result.head(30))
-
-    # -----------------------------
-    # PPT EXPORT
-    # -----------------------------
-    st.markdown("## 📥 Export")
-
-    if st.button("Generate PPT"):
-        ppt = generate_ppt(filtered_matched, k1, k2, insights, filtered)
-
-        with open(ppt, "rb") as f:
-            st.download_button(
-                "Download PPT",
-                f,
-                "dashboard.pptx",
-                "application/vnd.openxmlformats-officedocument.presentationml.presentation"
-            )
-
-
-# ============================================================
-# PAGE 2
-# ============================================================
-elif page == "📈 Utilization & Cost Comparison":
-
-    st.header("📈 Utilization & Cost Comparison")
-
-    df = load_summary_data()
-
-    if df is not None:
-        st.dataframe(df.head(50))
+select * from consolidated_data order by case_manager_name, pat_name, start_date
+ 
+);
+ 
+disconnect from mycon;
+quit;
