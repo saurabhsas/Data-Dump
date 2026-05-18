@@ -1,22 +1,27 @@
-18. Top K Frequent Elements
+from typing import List
+from collections import Counter
 
-Write a function that take list of function as input:
-Given an integer array nums and an integer k, return the k most frequent elements. You may return the answer in any order.
+def topKFrequent(nums: List[int], k: int) -> List[int]:
 
-Example 1:
-Input: nums = [1,1,1,2,2,3], k = 2
-Output: [1,2]
-Example 2:
-Input: nums = [1], k = 1
-Output: [1]
-Example 3:
-Input: nums = [1,2,1,2,1,2,3,1,3,2], k = 2
-Output: [1,2]
+    # Step 1: Count frequency of each number
+    count = Counter(nums)
 
-Constraints:
-· 1 <= nums.length <= 10^5
-· -10^4 <= nums[i] <= 10^4
-· k is in the range [1, the number of unique elements in the array].
-· It is guaranteed that the answer is unique.
+    # Step 2: Create buckets
+    # Index = frequency
+    buckets = [[] for _ in range(len(nums) + 1)]
 
-Follow up: Your algorithm's time complexity must be better than O(n log n), where n is the array's size.
+    # Step 3: Put numbers into buckets
+    for num, freq in count.items():
+        buckets[freq].append(num)
+
+    # Step 4: Collect top k frequent elements
+    result = []
+
+    # Traverse buckets from high frequency to low
+    for freq in range(len(buckets) - 1, 0, -1):
+
+        for num in buckets[freq]:
+            result.append(num)
+
+            if len(result) == k:
+                return result
